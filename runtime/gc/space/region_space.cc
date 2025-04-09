@@ -24,6 +24,11 @@
 #include "mirror/object-inl.h"
 #include "thread_list.h"
 
+// jiacheng start
+#include "niel_stub.h"
+#include "niel_swap.h"
+// jiacheng end
+
 namespace art {
 namespace gc {
 namespace space {
@@ -471,6 +476,11 @@ void RegionSpace::ClearFromSpace(/* out */ uint64_t* cleared_bytes,
       }
       if (r->IsInFromSpace()) {
         expand_madvise_range(r);
+        // jiacheng start
+        size_t r_begin = reinterpret_cast<size_t>(r->Begin());
+        size_t r_end = reinterpret_cast<size_t>(r->End());
+        niel::swap::GcRecordFreeRegion(Thread::Current(), r_begin, r_end, r->Idx());
+        // jiacheng end
       } else if (r->IsInUnevacFromSpace()) {
         // We must skip tails of live large objects.
         if (r->LiveBytes() == 0 && !r->IsLargeTail()) {
@@ -1096,6 +1106,28 @@ void RegionSpace::Region::UnfreeLargeTail(RegionSpace* region_space, uint32_t al
   MarkAsAllocated(region_space, alloc_time);
   state_ = RegionState::kRegionStateLargeTail;
 }
+
+// jiacheng start
+void RegionSpace::JiachengFreeStubByRegion(size_t region_idx, gc::space::LargeObjectSpace* swappedInSpace) {
+  auto visitor = [&swappedInSpace](mirror::Object* object) {
+    if (object && object->GetStubFlag()) {
+        LOG(INFO) << "jiacheng debug region_space.cc JiachengFreeStubByRegion() 1058" << " object= " << object << std::flush;
+        niel::swap::Stub* stub = (niel::swap::Stub*)object;
+        stub->LockTableEntry();
+        mirror::Object * swappedInObj = stub->GetObjectAddress();
+        if (swappedInObj != nullptr) {
+            CHECK(swappedInSpace->Contains(swappedInObj));
+            swappedInSpace->Free(Thread::Current(), swappedInObj);
+        }
+        stub->GetTableEntry()->ClearOccupiedBit();
+        stub->UnlockTableEntry();
+    }
+  };
+
+  Region* reg = &regions_[region_idx];
+  WalkNonLargeRegion(visitor, reg);
+}
+// jiacheng end
 
 }  // namespace space
 }  // namespace gc

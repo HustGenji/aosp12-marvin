@@ -378,7 +378,8 @@ class SHARED_LOCKABLE ReaderWriterMutex : public BaseMutex {
 
   // Assert the current thread doesn't hold this ReaderWriterMutex either in shared or exclusive
   // mode.
-  ALWAYS_INLINE void AssertNotHeld(const Thread* self) ASSERT_CAPABILITY(!this) {
+  // ALWAYS_INLINE void AssertNotHeld(const Thread* self) ASSERT_CAPABILITY(!this) {
+  void AssertNotHeld(const Thread* self) ASSERT_CAPABILITY(!this) {
     if (kDebugLocking && (gAborting == 0)) {
       CHECK(!IsExclusiveHeld(self)) << *this;
       CHECK(!IsSharedHeld(self)) << *this;

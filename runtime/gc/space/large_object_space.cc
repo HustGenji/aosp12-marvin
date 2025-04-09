@@ -36,6 +36,11 @@
 #include "space-inl.h"
 #include "thread-current-inl.h"
 
+// marvin start
+#include "niel_instrumentation.h"
+#include "niel_swap.h"
+// marvin end
+
 namespace art {
 namespace gc {
 namespace space {
@@ -133,6 +138,18 @@ LargeObjectMapSpace* LargeObjectMapSpace::Create(const std::string& name) {
   }
 }
 
+// jiacheng start
+LargeObjectMapSpace* LargeObjectMapSpace::JiachengCreate(const std::string& name, uint8_t* start, size_t capacity) {
+  (void)start;
+  (void)capacity;
+  if (Runtime::Current()->IsRunningOnMemoryTool()) {
+    return new MemoryToolLargeObjectMapSpace(name);
+  } else {
+    return new LargeObjectMapSpace(name);
+  }
+}
+// jiacheng end
+
 mirror::Object* LargeObjectMapSpace::Alloc(Thread* self, size_t num_bytes,
                                            size_t* bytes_allocated, size_t* usable_size,
                                            size_t* bytes_tl_bulk_allocated) {
@@ -167,6 +184,9 @@ mirror::Object* LargeObjectMapSpace::Alloc(Thread* self, size_t num_bytes,
   total_bytes_allocated_ += allocation_size;
   ++num_objects_allocated_;
   ++total_objects_allocated_;
+  // marvin start
+  NIEL_INST_RECORD_ALLOC(self, this, allocation_size);
+  // marvin end
   return obj;
 }
 
@@ -189,6 +209,9 @@ void LargeObjectMapSpace::SetAllLargeObjectsAsZygoteObjects(Thread* self, bool s
 }
 
 size_t LargeObjectMapSpace::Free(Thread* self, mirror::Object* ptr) {
+  // marvin start
+  niel::swap::GcRecordFree(self, ptr);
+  // marvin end
   MutexLock mu(self, lock_);
   auto it = large_objects_.find(ptr);
   if (UNLIKELY(it == large_objects_.end())) {
@@ -202,6 +225,9 @@ size_t LargeObjectMapSpace::Free(Thread* self, mirror::Object* ptr) {
   num_bytes_allocated_ -= allocation_size;
   --num_objects_allocated_;
   large_objects_.erase(it);
+  // marvin start
+  NIEL_INST_RECORD_FREE(self, this, allocation_size, 1);
+  // marvin end
   return allocation_size;
 }
 
@@ -369,6 +395,23 @@ FreeListSpace* FreeListSpace::Create(const std::string& name, size_t size) {
   return new FreeListSpace(name, std::move(mem_map), mem_map.Begin(), mem_map.End());
 }
 
+// jiacheng start
+FreeListSpace* FreeListSpace::JiachengCreate(const std::string& name, uint8_t* start, size_t capacity) {
+  CHECK_EQ(capacity % kAlignment, 0U);
+  std::string error_msg;
+  MemMap mem_map = MemMap::MapAnonymous(name.c_str(),
+                                        start,
+                                        capacity,
+                                        PROT_READ | PROT_WRITE,
+                                        /*low_4gb=*/ true,
+                                        /*reuse=*/ false,
+                                        /*reservation=*/ nullptr,
+                                        &error_msg);
+  CHECK(mem_map.IsValid()) << "Failed to allocate large object space mem map: " << error_msg;
+  return new FreeListSpace(name, std::move(mem_map), mem_map.Begin(), mem_map.End());
+}
+// jiacheng end
+
 FreeListSpace::FreeListSpace(const std::string& name,
                              MemMap&& mem_map,
                              uint8_t* begin,
@@ -425,6 +468,9 @@ void FreeListSpace::RemoveFreePrev(AllocationInfo* info) {
 }
 
 size_t FreeListSpace::Free(Thread* self, mirror::Object* obj) {
+  // marvin start
+  niel::swap::GcRecordFree(self, obj);
+  // marvin end
   DCHECK(Contains(obj)) << reinterpret_cast<void*>(Begin()) << " " << obj << " "
                         << reinterpret_cast<void*>(End());
   DCHECK_ALIGNED(obj, kAlignment);
@@ -483,6 +529,9 @@ size_t FreeListSpace::Free(Thread* self, mirror::Object* obj) {
   --num_objects_allocated_;
   DCHECK_LE(allocation_size, num_bytes_allocated_);
   num_bytes_allocated_ -= allocation_size;
+  // marvin start
+  NIEL_INST_RECORD_FREE(self, this, allocation_size, 1);
+  // marvin end
   return allocation_size;
 }
 
@@ -551,6 +600,9 @@ mirror::Object* FreeListSpace::Alloc(Thread* self, size_t num_bytes, size_t* byt
   }
   new_info->SetPrevFreeBytes(0);
   new_info->SetByteSize(allocation_size, false);
+  // marvin start
+  NIEL_INST_RECORD_ALLOC(self, this, allocation_size);
+  // marvin end
   return obj;
 }
 

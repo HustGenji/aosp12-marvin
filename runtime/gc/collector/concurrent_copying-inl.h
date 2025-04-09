@@ -163,6 +163,9 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
         if (to_ref == nullptr) {
           // It isn't marked yet. Mark it by copying it to the to-space.
           to_ref = Copy(self, from_ref, holder, offset);
+          // jiacheng start
+          niel::swap::RecordForwardedObject(self, from_ref, to_ref);
+          // jiacheng end
         }
         // The copy should either be in a to-space region, or in the
         // non-moving space, if it could not fit in a to-space region.

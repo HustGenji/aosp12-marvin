@@ -103,6 +103,11 @@
 #include "verify_object-inl.h"
 #include "well_known_classes.h"
 
+// marvin start
+#include "niel_instrumentation.h"
+#include "niel_scoped_timer.h"
+// marvin end
+
 namespace art {
 
 #ifdef ART_TARGET_ANDROID
@@ -1041,8 +1046,37 @@ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_p
   if (old_process_state != new_process_state) {
     const bool jank_perceptible = new_process_state == kProcessStateJankPerceptible;
     if (jank_perceptible) {
+      // marvin start
+      {
+        // Added by Niel: we need to make sure the GC isn't running when we swap objects back
+        // in, because otherwise, a stub that the GC is currently working with might be
+        // deleted while the GC is still using it. I think the code below blocks until any
+        // in-progress GC completes, but I'm not sure if it is the best/most correct way of
+        // doing so (it is based on code in Heap::PerformHomogeneousSpaceCompact()).
+        niel::ScopedTimer timer("swap-in pause");
+        Thread * self = Thread::Current();
+
+        // jiacheng start
+        ScopedThreadStateChange stsc(self, kWaitingForGcToComplete);
+        MutexLock mu(self, *gc_complete_lock_);
+        LOG(INFO) << "jiacheng debug heap.cc UpdateProcessState() 1004 before WaitForGcToCompleteLocked() ";
+        WaitForGcToCompleteLocked(kGcCauseForAlloc, self);
+        LOG(INFO) << "jiacheng debug heap.cc UpdateProcessState() 1006 before ScopedSuspendAll ";
+
+        ScopedSuspendAll ssa("niel_swap_objects_in");
+
+        // jiacheng end
+        niel::swap::UnlockAllReclamationTableEntries();
+        niel::swap::SetInForeground(true);
+        LOG(INFO) << "jiacheng debug heap.cc UpdateProcessState() 1011 before SwapObjectsIn() ";
+        niel::swap::SwapObjectsIn(this);
+      }
+      // marvin end
       // Transition back to foreground right away to prevent jank.
-      RequestCollectorTransition(foreground_collector_type_, 0);
+
+      // jiacheng start
+      // RequestCollectorTransition(foreground_collector_type_, 0);
+      // jiacheng end
       GrowHeapOnJankPerceptibleSwitch();
     } else {
       // Don't delay for debug builds since we may want to stress test the GC.
@@ -1054,6 +1088,9 @@ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_p
                                  kStressCollectorTransition
                                      ? 0
                                      : kCollectorTransitionWait);
+      // marvin start
+      niel::swap::SetInForeground(false);
+      // marvin end
     }
   }
 }
@@ -1082,6 +1119,9 @@ void Heap::DeleteThreadPool() {
 
 void Heap::AddSpace(space::Space* space) {
   CHECK(space != nullptr);
+  // marvin start
+  nielinst_spaces_.push_back(space);
+  // marvin end
   WriterMutexLock mu(Thread::Current(), *Locks::heap_bitmap_lock_);
   if (space->IsContinuousSpace()) {
     DCHECK(!space->IsDiscontinuousSpace());
@@ -1125,6 +1165,10 @@ void Heap::SetSpaceAsDefault(space::ContinuousSpace* continuous_space) {
 
 void Heap::RemoveSpace(space::Space* space) {
   DCHECK(space != nullptr);
+  // marvin start
+  auto nielinst_spaces_it = std::find(nielinst_spaces_.begin(), nielinst_spaces_.end(), space);
+  nielinst_spaces_.erase(nielinst_spaces_it);
+  // marvin end
   WriterMutexLock mu(Thread::Current(), *Locks::heap_bitmap_lock_);
   if (space->IsContinuousSpace()) {
     DCHECK(!space->IsDiscontinuousSpace());
@@ -1481,6 +1525,10 @@ void Heap::DoPendingCollectorTransition() {
       CollectGarbageInternal(collector::kGcTypeFull,
                              kGcCauseCollectorTransition,
                              /*clear_soft_references=*/false, GC_NUM_ANY);
+      // jiacheng start
+      LOG(INFO) << "jiacheng debug heap.cc 1443 DoPendingCollectorTransition()";
+      niel::swap::CreateStubsAndSwapOut();
+      // jiacheng end
     } else {
       VLOG(gc) << "CC background compaction ignored due to jank perceptible process state";
     }
@@ -2087,6 +2135,11 @@ HomogeneousSpaceCompactResult Heap::PerformHomogeneousSpaceCompact() {
   collector::GarbageCollector* collector;
   {
     ScopedSuspendAll ssa(__FUNCTION__);
+    // marvin start
+    niel::swap::UnlockAllReclamationTableEntries();
+    niel::swap::CreateStubs(self, this);
+    niel::swap::SwapObjectsOut();
+    // marvin end
     uint64_t start_time = NanoTime();
     // Launch compaction.
     space::MallocSpace* to_space = main_space_backup_.release();
@@ -2732,6 +2785,10 @@ void Heap::LogGC(GcCause gc_cause, collector::GarbageCollector* collector) {
       log_gc = log_gc || pause >= long_pause_log_threshold_;
     }
   }
+  // marvin start
+  // Added by Niel: always display GC log message
+  log_gc = true;
+  // marvin end
   if (log_gc) {
     const size_t percent_free = GetPercentFree();
     const size_t current_heap_size = GetBytesAllocated();
@@ -3474,10 +3531,14 @@ collector::GcType Heap::WaitForGcToCompleteLocked(GcCause cause, Thread* self) {
   }
   uint64_t wait_time = NanoTime() - wait_start;
   total_wait_time_ += wait_time;
-  if (wait_time > long_pause_log_threshold_) {
-    LOG(INFO) << "WaitForGcToComplete blocked " << cause << " on " << last_gc_cause << " for "
-              << PrettyDuration(wait_time);
-  }
+  // jiacheng start
+  // if (wait_time > long_pause_log_threshold_) {
+  //   LOG(INFO) << "WaitForGcToComplete blocked " << cause << " on " << last_gc_cause << " for "
+  //             << PrettyDuration(wait_time);
+  // }
+  LOG(INFO) << "WaitForGcToComplete blocked " << cause << " on " << last_gc_cause << " for "
+            << PrettyDuration(wait_time);
+  // jiacheng end
   if (self != task_processor_->GetRunningThread()) {
     // The current thread is about to run a collection. If the thread
     // is not the heap task daemon thread, it's considered as a

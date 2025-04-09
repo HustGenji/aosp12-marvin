@@ -25,6 +25,8 @@
 #include "runtime.h"
 #include "verifier/verifier_enums.h"
 
+#include "art_method-inl.h"
+
 namespace art {
 
 AotClassLinker::AotClassLinker(InternTable* intern_table)

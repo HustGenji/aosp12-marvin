@@ -241,7 +241,15 @@ enum InterpreterImplKind {
 #if ART_USE_CXX_INTERPRETER
 static constexpr InterpreterImplKind kInterpreterImplKind = kSwitchImplKind;
 #else
-static constexpr InterpreterImplKind kInterpreterImplKind = kMterpImplKind;
+// marvin start
+// static constexpr InterpreterImplKind kInterpreterImplKind = kMterpImplKind;
+// Changed by Niel: we use the switch interpreter to ensure that all array accesses
+// go through the Array and Object class methods, instead of directly executing loads
+// and stores on the underlying memory, so that the swap hook preambles of these
+// methods can check if the object is actually a stub.
+static constexpr InterpreterImplKind kInterpreterImplKind = kSwitchImplKind;
+//static constexpr InterpreterImplKind kInterpreterImplKind = kMterpImplKind;
+// marvin end
 #endif
 
 static JValue ExecuteSwitch(Thread* self,

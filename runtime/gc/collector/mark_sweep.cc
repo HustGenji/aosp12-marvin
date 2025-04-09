@@ -46,6 +46,11 @@
 #include "thread-current-inl.h"
 #include "thread_list.h"
 
+// marvin start
+#include "niel_instrumentation.h"
+#include "niel_swap.h"
+// marvin end
+
 namespace art {
 namespace gc {
 namespace collector {
@@ -145,6 +150,10 @@ void MarkSweep::InitializePhase() {
 }
 
 void MarkSweep::RunPhases() {
+  // marvin start
+  LOG(INFO) << "NIEL running MarkSweep GC with name " << GetName();
+  NIEL_INST_START_ACCESS_COUNT(this);
+  // marvin end
   Thread* self = Thread::Current();
   InitializePhase();
   Locks::mutator_lock_->AssertNotHeld(self);
@@ -172,6 +181,9 @@ void MarkSweep::RunPhases() {
     ReclaimPhase();
   }
   GetHeap()->PostGcVerification(this);
+  // marvin start
+  NIEL_INST_FINISH_ACCESS_COUNT(this);
+  // marvin end
   FinishPhase();
 }
 
@@ -1444,6 +1456,10 @@ void MarkSweep::ProcessMarkStack(bool paused) {
       }
       DCHECK(obj != nullptr);
       ScanObject(obj);
+      // marvin start
+      NIEL_INST_COUNT_ACCESS(this, obj);
+      niel::swap::CheckAndUpdate(this, obj);
+      // marvin end
     }
   }
 }

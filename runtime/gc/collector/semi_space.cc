@@ -95,7 +95,14 @@ SemiSpace::SemiSpace(Heap* heap, const std::string& name_prefix)
 }
 
 void SemiSpace::RunPhases() {
+  // marvin start
+  LOG(INFO) << "NIEL running SemiSpace GC";
+  // marvin end
   Thread* self = Thread::Current();
+
+  // marvin start
+  niel::swap::SemiSpaceRecordStubMappings(self);
+  // marvin end
   InitializePhase();
   // Semi-space collector is special since it is sometimes called with the mutators suspended
   // during the zygote creation and collector transitions. If we already exclusively hold the
@@ -121,6 +128,9 @@ void SemiSpace::RunPhases() {
     GetHeap()->PostGcVerification(this);
   }
   FinishPhase();
+  // marvin start
+  niel::swap::SemiSpaceUpdateDataStructures(self);
+  // marvin end
 }
 
 void SemiSpace::InitializePhase() {
@@ -425,7 +435,17 @@ static inline size_t CopyAvoidingDirtyingPages(void* dest, const void* src, size
 }
 
 mirror::Object* SemiSpace::MarkNonForwardedObject(mirror::Object* obj) {
-  const size_t object_size = obj->SizeOf();
+  // marvin start
+  // const size_t object_size = obj->SizeOf();
+  size_t object_size = 0;
+  if (obj->GetStubFlag()) {
+    niel::swap::Stub * stub = (niel::swap::Stub *)obj;
+    object_size = stub->GetSize();
+  }
+  else {
+    object_size = obj->SizeOf();
+  }
+  // marvin end
   size_t bytes_allocated, unused_bytes_tl_bulk_allocated;
   // Copy it to the to-space.
   mirror::Object* forward_address = to_space_->AllocThreadUnsafe(
@@ -456,6 +476,10 @@ mirror::Object* SemiSpace::MarkNonForwardedObject(mirror::Object* obj) {
   }
   DCHECK(to_space_->HasAddress(forward_address) || fallback_space_->HasAddress(forward_address))
       << forward_address << "\n" << GetHeap()->DumpSpaces();
+  
+  // marvin start
+  niel::swap::RecordForwardedObject(self_, obj, forward_address);
+  // marvin end
   return forward_address;
 }
 
@@ -579,6 +603,31 @@ class SemiSpace::MarkObjectVisitor {
 // Visit all of the references of an object and update.
 void SemiSpace::ScanObject(Object* obj) {
   DCHECK(!from_space_->HasAddress(obj)) << "Scanning object " << obj << " in from space";
+  // marvin start
+  if (obj->GetStubFlag()) {
+    niel::swap::Stub * stub = (niel::swap::Stub *)obj;
+
+    // TODO: Figure out whether this code is necessary. (Don't we keep the
+    // stub's references updated whenever the object's references change,
+    // making this code redundant if we're going to mark the stub's references
+    // right afterwards?)
+    stub->LockTableEntry();
+    if (stub->GetTableEntry()->GetResidentBit()) {
+        MarkObjectVisitor visitor(this);
+        stub->GetObjectAddress()->VisitReferences(visitor, visitor);
+    }
+    stub->UnlockTableEntry();
+
+    for (int i = 0; i < stub->GetNumRefs(); i++) {
+      mirror::Object * rawRef = stub->GetReference(i);
+      mirror::CompressedReference<mirror::Object> typedRef
+          = mirror::CompressedReference<mirror::Object>::FromMirrorPtr(rawRef);
+      MarkObject(&typedRef);
+      stub->SetReference(i, typedRef.AsMirrorPtr());
+    }
+    return;
+  }
+  // marvin end
   MarkObjectVisitor visitor(this);
   // Turn off read barrier. ZygoteCompactingCollector doesn't use it (even in the CC build.)
   obj->VisitReferences</*kVisitNativeRoots=*/true, kDefaultVerifyFlags, kWithoutReadBarrier>(

@@ -25,6 +25,10 @@
 #include "mirror/object_array-inl.h"
 #include "mirror/reference.h"
 
+// marvin start
+#include "niel_stub-inl.h"
+// marvin end
+
 namespace art {
 namespace gc {
 namespace collector {
@@ -34,6 +38,32 @@ inline void MarkSweep::ScanObjectVisit(mirror::Object* obj,
                                        const MarkVisitor& visitor,
                                        const ReferenceVisitor& ref_visitor) {
   DCHECK(IsMarked(obj)) << "Scanning unmarked object " << obj << "\n" << heap_->DumpSpaces();
+  // marvin start
+  if (obj->GetStubFlag()) {
+    niel::swap::Stub * stub = (niel::swap::Stub *)obj;
+
+    // jiacheng start
+    LOG(INFO) << "jiacheng mark_sweep-inl.h 44 MarkSweep::ScanObjectVisit() "
+              << " obj->GetStubFlag()= " << obj->GetStubFlag()
+              << " obj= " << obj
+              << " stub->GetNumRefs()= " << stub->GetNumRefs()
+              ;
+    // jiacheng end
+
+    for (int i = 0; i < stub->GetNumRefs(); i++) {
+      mirror::Object * ref = stub->GetReference(i);
+      MarkObject(ref);
+      // jiacheng start
+      LOG(INFO) << "jiacheng mark_sweep-inl.h 55 MarkSweep::ScanObjectVisit() "
+          << " obj= " << obj
+          << " i= " << i
+          << " ref= " << ref
+          ;
+      // jiacheng end
+    }
+    return;
+  }
+  // marvin end
   obj->VisitReferences(visitor, ref_visitor);
   if (kCountScannedTypes) {
     mirror::Class* klass = obj->GetClass<kVerifyNone>();

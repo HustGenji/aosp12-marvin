@@ -153,6 +153,11 @@ class LargeObjectMapSpace : public LargeObjectSpace {
   // Creates a large object space. Allocations into the large object space use memory maps instead
   // of malloc.
   static LargeObjectMapSpace* Create(const std::string& name);
+
+  // jiacheng start
+  static LargeObjectMapSpace* JiachengCreate(const std::string& name, uint8_t* start, size_t capacity);
+  // jiacheng end
+
   // Return the storage space required by obj.
   size_t AllocationSize(mirror::Object* obj, size_t* usable_size) override REQUIRES(!lock_);
   mirror::Object* Alloc(Thread* self, size_t num_bytes, size_t* bytes_allocated,
@@ -189,6 +194,11 @@ class FreeListSpace final : public LargeObjectSpace {
 
   virtual ~FreeListSpace();
   static FreeListSpace* Create(const std::string& name, size_t capacity);
+
+  // jiacheng start
+  static FreeListSpace* JiachengCreate(const std::string& name, uint8_t* start, size_t capacity);
+  // jiacheng end
+
   size_t AllocationSize(mirror::Object* obj, size_t* usable_size) override
       REQUIRES(lock_);
   mirror::Object* Alloc(Thread* self, size_t num_bytes, size_t* bytes_allocated,

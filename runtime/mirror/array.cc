@@ -131,14 +131,23 @@ ObjPtr<PrimitiveArray<T>> PrimitiveArray<T>::Alloc(Thread* self, size_t length) 
 }
 
 void Array::ThrowArrayIndexOutOfBoundsException(int32_t index) {
+  // marvin start
+  SWAP_PREAMBLE_VOID(ThrowArrayIndexOutOfBoundsException, Array, index)
+  // marvin end
   art::ThrowArrayIndexOutOfBoundsException(index, GetLength());
 }
 
 void Array::ThrowArrayStoreException(ObjPtr<Object> object) {
+  // marvin start
+  SWAP_PREAMBLE_VOID(ThrowArrayStoreException, Array, object)
+  // marvin end
   art::ThrowArrayStoreException(object->GetClass(), this->GetClass());
 }
 
 ObjPtr<Array> Array::CopyOf(Handle<Array> h_this, Thread* self, int32_t new_length) {
+  // marvin start
+  // SWAP_PREAMBLE(CopyOf, Array, ObjPtr<Array>, self, new_length)
+  // marvin end
   ObjPtr<Class> klass = h_this->GetClass();
   CHECK(klass->IsPrimitiveArray()) << "Will miss write barriers";
   DCHECK_GE(new_length, 0);

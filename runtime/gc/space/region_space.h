@@ -64,6 +64,10 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
   static MemMap CreateMemMap(const std::string& name, size_t capacity, uint8_t* requested_begin);
   static RegionSpace* Create(const std::string& name, MemMap&& mem_map, bool use_generational_cc);
 
+  // jiacheng start
+  void JiachengFreeStubByRegion(size_t region_idx, gc::space::LargeObjectSpace* swappedInSpace) NO_THREAD_SAFETY_ANALYSIS;
+  // jiacheng end
+
   // Allocate `num_bytes`, returns null if the space is full.
   mirror::Object* Alloc(Thread* self,
                         size_t num_bytes,

@@ -31,10 +31,27 @@ template <bool kVisitNativeRoots,
           ReadBarrierOption kReadBarrierOption,
           typename Visitor,
           typename JavaLangRefVisitor>
-inline void Object::VisitReferences(const Visitor& visitor,
+// jiacheng start
+NO_INLINE void Object::VisitReferences(const Visitor& visitor,
                                     const JavaLangRefVisitor& ref_visitor) {
-  visitor(this, ClassOffset(), /* is_static= */ false);
+  // inline void Object::VisitReferences(const Visitor& visitor,
+  //                                     const JavaLangRefVisitor& ref_visitor) {
+  // jiacheng end
+
+  // marvin start
+  if (GetStubFlag()) return;
+  // SWAP_PREAMBLE_TEMPLATE_VOID(VisitReferences, Object, GATHER_TEMPLATE_ARGS(kVisitNativeRoots, kVerifyFlags, kReadBarrierOption, Visitor, JavaLangRefVisitor), visitor, ref_visitor)
+  // marvin end
+
+  // marvin start
+  SetIgnoreReadFlag();
+  // marvin end
   ObjPtr<Class> klass = GetClass<kVerifyFlags, kReadBarrierOption>();
+  visitor(this, ClassOffset(), /* is_static= */ false);
+   // marvin start
+   // Necessary in case the visitor changed the class reference
+   klass = GetClass<kVerifyFlags, kReadBarrierOption>();
+   // marvin end
   const uint32_t class_flags = klass->GetClassFlags<kVerifyNone>();
   if (LIKELY(class_flags == kClassFlagNormal)) {
     DCHECK((!klass->IsVariableSize<kVerifyFlags>()));
@@ -88,6 +105,9 @@ inline void Object::VisitReferences(const Visitor& visitor,
       }
     }
   }
+  // marvin start
+  ClearIgnoreReadFlag();
+  // marvin end
 }
 
 }  // namespace mirror

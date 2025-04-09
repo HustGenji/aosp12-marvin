@@ -402,6 +402,10 @@ static void VMRuntime_registerAppInfo(JNIEnv* env,
       cur_profile_file_str,
       ref_profile_file_str,
       static_cast<int32_t>(code_path_type));
+
+   // marvin start
+   niel::swap::InitIfNecessary(Thread::Current());
+   // marvin end
 }
 
 static jboolean VMRuntime_isBootClassPathOnDisk(JNIEnv* env, jclass, jstring java_instruction_set) {

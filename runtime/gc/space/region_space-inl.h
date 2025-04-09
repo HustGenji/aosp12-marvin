@@ -274,9 +274,13 @@ inline void RegionSpace::WalkNonLargeRegion(Visitor&& visitor, const Region* r) 
   // object alignment constraints) that can be visited iteratively: we
   // can compute the next object's location by using the current
   // object's address and size (and object alignment constraints).
-  const bool need_bitmap =
-      r->LiveBytes() != static_cast<size_t>(-1) &&
-      r->LiveBytes() != static_cast<size_t>(top - pos);
+  
+  // jiacheng start
+  // const bool need_bitmap =
+  //     r->LiveBytes() != static_cast<size_t>(-1) &&
+  //     r->LiveBytes() != static_cast<size_t>(top - pos);
+  bool need_bitmap = false;
+  // jiacheng end
   if (need_bitmap) {
     GetLiveBitmap()->VisitMarkedRange(
         reinterpret_cast<uintptr_t>(pos),
@@ -285,7 +289,14 @@ inline void RegionSpace::WalkNonLargeRegion(Visitor&& visitor, const Region* r) 
   } else {
     while (pos < top) {
       mirror::Object* obj = reinterpret_cast<mirror::Object*>(pos);
-      if (obj->GetClass<kDefaultVerifyFlags, kWithoutReadBarrier>() != nullptr) {
+      // jaicheng start
+      // if (obj->GetClass<kDefaultVerifyFlags, kWithoutReadBarrier>() != nullptr) {
+      if (obj->GetStubFlag()) {
+        visitor(obj);
+        // TODO: Insure visitor parameter could process stub type
+        pos = reinterpret_cast<uint8_t*>(GetNextObject(obj));
+      } else if (obj->GetClass<kDefaultVerifyFlags, kWithoutReadBarrier>() != nullptr) {
+      // jiacheng end
         visitor(obj);
         pos = reinterpret_cast<uint8_t*>(GetNextObject(obj));
       } else {
@@ -305,7 +316,16 @@ inline void RegionSpace::WalkToSpace(Visitor&& visitor) {
 }
 
 inline mirror::Object* RegionSpace::GetNextObject(mirror::Object* obj) {
-  const uintptr_t position = reinterpret_cast<uintptr_t>(obj) + obj->SizeOf();
+  // jiacheng start
+  // const uintptr_t position = reinterpret_cast<uintptr_t>(obj) + obj->SizeOf();
+  uintptr_t position = 0;
+  if (obj->GetStubFlag()) {
+    niel::swap::Stub* stub = (niel::swap::Stub*)obj;
+    position = reinterpret_cast<uintptr_t>(obj) + stub->GetSize();
+  } else {
+    position = reinterpret_cast<uintptr_t>(obj) + obj->SizeOf();
+  }
+  // jiacheng end
   return reinterpret_cast<mirror::Object*>(RoundUp(position, kAlignment));
 }
 

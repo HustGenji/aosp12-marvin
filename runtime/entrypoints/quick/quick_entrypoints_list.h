@@ -168,7 +168,11 @@
   V(NewStringFromString, void, void) \
   V(NewStringFromStringBuffer, void, void) \
   V(NewStringFromStringBuilder, void, void) \
-\
+  /* marvin start */ \
+  V(SwapInOnDemand, void, niel::swap::Stub*) \
+  V(NonexistantEntryPointForPadding, void) \
+  V(PopulateStub, void, niel::swap::Stub*, mirror::Object*) \
+  /* marvin end */ \
   V(StringBuilderAppend, void*, uint32_t) \
 \
   V(UpdateInlineCache, void, void) \

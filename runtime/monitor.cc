@@ -1053,7 +1053,10 @@ void Monitor::Inflate(Thread* self, Thread* owner, ObjPtr<mirror::Object> obj, i
 
 void Monitor::InflateThinLocked(Thread* self, Handle<mirror::Object> obj, LockWord lock_word,
                                 uint32_t hash_code) {
-  DCHECK_EQ(lock_word.GetState(), LockWord::kThinLocked);
+  // jiacheng debug start
+  // DCHECK_EQ(lock_word.GetState(), LockWord::kThinLocked);
+  CHECK_EQ(lock_word.GetState(), LockWord::kThinLocked);
+  // jiacheng debug end
   uint32_t owner_thread_id = lock_word.ThinLockOwner();
   if (owner_thread_id == self->GetThreadId()) {
     // We own the monitor, we can easily inflate it.

@@ -950,6 +950,104 @@ class CodeGeneratorARM64 : public CodeGenerator {
   void GenerateImplicitNullCheck(HNullCheck* instruction) override;
   void GenerateExplicitNullCheck(HNullCheck* instruction) override;
 
+  // marvin start
+ 
+   // Generate code to check if the pointer in register objectReg points to a
+   // stub, and if it does, swap in the corresponding object on-demand if
+   // necessary and then replace the stub pointer in objectReg with a pointer
+   // to the swapped-in object.
+   void GenerateStubCheckAndSwapCode(vixl::aarch64::Register objectReg,
+    const std::vector<vixl::aarch64::CPURegister> & registersToMaybeSave,
+    LocationSummary * locations);
+
+  void GenerateRestoreStub(vixl::aarch64::Register objectReg);
+
+  void GenerateUpdateStub(vixl::aarch64::Register stubReg,
+  const std::vector<vixl::aarch64::CPURegister> & registersToMaybeSave,
+  LocationSummary * locations);
+
+  // Identify which registers need to be saved on the stack before a procedure
+  // call.
+  //
+  // NOTE: this method is super hack-y and probably could be written more
+  // elegantly if I had a better understanding of the abstractions that VIXL
+  // and the optimizing compiler use for code generation.
+  //
+  // TODO: there are registers that are not marked as live in the
+  // LocationSummary but still need to be saved and restored (e.g., the
+  // register that gets passed in as objectReg in
+  // CodeGeneratorARM64::GenerateVirtualCall()). Figure out why this is the
+  // case, and if we really do need to have the caller explicitly pass in
+  // additional registers to save, add documentation to make the purpose of
+  // registersToMaybeSave clear.
+  std::vector<vixl::aarch64::CPURegister> IdentifyRegistersToSave(
+      const std::vector<vixl::aarch64::CPURegister> & registersToMaybeSave,
+      LocationSummary * locations);
+
+  int ComputeStackGrowthSize(const std::vector<vixl::aarch64::CPURegister> & registersToSave);
+
+  void GetTypedRegisterLists(const std::vector<vixl::aarch64::CPURegister> & registersToSave,
+  std::vector<vixl::aarch64::Register> & coreRegisters,
+  std::vector<vixl::aarch64::VRegister> & vRegisters);
+
+  // Generate code to save the registers in the given list onto the stack and
+  // restore them from the stack.
+  void GenerateSaveRegisters(const std::vector<vixl::aarch64::CPURegister> & registersToSave);
+  void GenerateRestoreRegisters(const std::vector<vixl::aarch64::CPURegister> & savedRegisters);
+
+  /*
+  * The two methods below generate code to set bits in the object header's
+  * x_access_bits_ byte. Ideally, these bits should be set in one atomic
+  * operation with acquire-release semantics using the AArch64 instruction
+  * LDEORALB, but VIXL does not appear to have support for LDEORALB, and
+  * operations with strong memory ordering semantics also have a high
+  * performance cost. The current implementation generates code that loads and
+  * stores the x_access_bits_ byte in separate instructions without any memory
+  * ordering guarantees.
+  *
+  * The current implementation could result in errors in read/write set
+  * tracking if multiple threads perform different operations on the same
+  * object at the same time (e.g., if one thread reads from an object while
+  * another thread writes to that object or updates its IgnoreReadFlag, and
+  * the instructions operating on x_access_bits_ from the two threads are
+  * interleaved, one of the changes to x_access_bits_ could be lost). As a
+  * result, our read/write set tracking should be considered best-effort. In
+  * practice, the read/write set tracking seems to be giving accurate results
+  * when running on synthetic test apps with known object access patterns.
+  */
+
+
+  // Generate code to check the IgnoreReadFlag of an object, and if it is not
+  // set, set the read counter bit in the object header.
+  void GenerateSetReadBit(vixl::aarch64::Register objectReg);
+
+  // Generate code to set the write bit and the dirty bit in an object header
+  // (compiled code always writes to both bits at the same time).
+  void GenerateSetWriteBitAndDirtyBit(vixl::aarch64::Register objectReg);
+
+  /*
+  * The two methods below generate code to lock and unlock an object's
+  * reclamation table entry. They increment and decrement, respectively, the
+  * table entry's app lock counter. Like the object header bit-setting methods
+  * above, they should do these increments and decrements atomically.
+  *
+  * The current implementation could result in a correctness issue where two
+  * threads attempt to lock or unlock the object at the same time, creating a
+  * situation where the OS either incorrectly thinks that an in-use object is
+  * unused or incorrectly thinks that an unused object is in use.
+  *
+  * TODO: Change these methods to use an atomic increment instruction, if one
+  * exists.
+  */
+
+  // Generate code to lock the given stub's reclamation table entry.
+  void GenerateLockReclamationTableEntry(vixl::aarch64::Register tableEntryReg, vixl::aarch64::Register temp);
+
+  // Generate code to unlock the given stub's reclamation table entry.
+  void GenerateUnlockReclamationTableEntry(vixl::aarch64::Register tableEntryReg, vixl::aarch64::Register temp);
+
+  // marvin end
+
   void MaybeRecordImplicitNullCheck(HInstruction* instr) final {
     // The function must be only called within special scopes
     // (EmissionCheckScope, ExactAssemblyScope) which prevent generation of

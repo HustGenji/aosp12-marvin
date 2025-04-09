@@ -29,6 +29,74 @@
 #include "runtime_globals.h"
 #include "verify_object.h"
 
+// marvin start
+#include "niel_stub-inl.h"
+#include "niel_swap.h"
+// marvin end
+
+// marvin start
+
+// #define SWAP_PREAMBLE(func_name, type_name, return_type, ...)
+
+#define SWAP_PREAMBLE(func_name, type_name, return_type, ...) \
+if (UNLIKELY(GetStubFlag())) { \
+  niel::swap::Stub * stub = (niel::swap::Stub *)this; \
+  stub->LockTableEntry(); \
+  if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) { \
+    niel::swap::SwapInOnDemand(stub); \
+  } \
+  return_type result = ((type_name *)(stub->GetObjectAddress()))->func_name(__VA_ARGS__); \
+  stub->UnlockTableEntry(); \
+  return result; \
+}
+
+// #define SWAP_PREAMBLE_TEMPLATE(func_name, type_name, return_type, template_args, ...)
+
+#define SWAP_PREAMBLE_TEMPLATE(func_name, type_name, return_type, template_args, ...) \
+if (UNLIKELY(GetStubFlag())) { \
+  niel::swap::Stub * stub = (niel::swap::Stub *)this; \
+  stub->LockTableEntry(); \
+  if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) { \
+    niel::swap::SwapInOnDemand(stub); \
+  } \
+  return_type result = ((type_name *)(stub->GetObjectAddress()))->func_name<template_args>(__VA_ARGS__); \
+  stub->UnlockTableEntry(); \
+  return result; \
+}
+
+// #define SWAP_PREAMBLE_VOID(func_name, type_name, ...)
+
+#define SWAP_PREAMBLE_VOID(func_name, type_name, ...) \
+if (UNLIKELY(GetStubFlag())) { \
+  niel::swap::Stub * stub = (niel::swap::Stub *)this; \
+  stub->LockTableEntry(); \
+  if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) { \
+    niel::swap::SwapInOnDemand(stub); \
+  } \
+  ((type_name *)(stub->GetObjectAddress()))->func_name(__VA_ARGS__); \
+  stub->UnlockTableEntry(); \
+  return; \
+}
+
+
+// #define SWAP_PREAMBLE_TEMPLATE_VOID(func_name, type_name, template_args, ...)
+
+#define SWAP_PREAMBLE_TEMPLATE_VOID(func_name, type_name, template_args, ...) \
+if (UNLIKELY(GetStubFlag())) { \
+  niel::swap::Stub * stub = (niel::swap::Stub *)this; \
+  stub->LockTableEntry(); \
+  if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) { \
+    niel::swap::SwapInOnDemand(stub); \
+  } \
+  ((type_name *)(stub->GetObjectAddress()))->func_name<template_args>(__VA_ARGS__); \
+  stub->UnlockTableEntry(); \
+  return; \
+}
+
+// #define GATHER_TEMPLATE_ARGS(...)
+#define GATHER_TEMPLATE_ARGS(...) __VA_ARGS__
+// marvin end
+
 namespace art {
 
 class ArtField;
@@ -71,7 +139,10 @@ class Throwable;
 static constexpr bool kCheckFieldAssignments = false;
 
 // Size of Object.
-static constexpr uint32_t kObjectHeaderSize = kUseBrooksReadBarrier ? 16 : 8;
+// marvin start
+// static constexpr uint32_t kObjectHeaderSize = kUseBrooksReadBarrier ? 16 : 8;
+static constexpr uint32_t kObjectHeaderSize = kUseBrooksReadBarrier ? 24 : 16;
+// marvin end
 
 // C++ mirror of java.lang.Object
 class MANAGED LOCKABLE Object {
@@ -92,6 +163,136 @@ class MANAGED LOCKABLE Object {
   static constexpr MemberOffset ClassOffset() {
     return OFFSET_OF_OBJECT_MEMBER(Object, klass_);
   }
+
+  // jiacheng start
+  static constexpr size_t PaddingOffset() {
+    return OFFSETOF_MEMBER(mirror::Object, x_padding_);
+  }
+
+  static constexpr size_t FlagsOffset() {
+    return OFFSETOF_MEMBER(mirror::Object, x_x0_flags_);
+  }
+
+  static constexpr size_t ShiftRegsOffset() {
+    return OFFSETOF_MEMBER(mirror::Object, x_x1_shift_regs_);
+  }
+
+  static constexpr size_t DirtyBitOffset() {
+    return OFFSETOF_MEMBER(mirror::Object, x_x2_dirty_bit_);
+  }
+
+  static constexpr size_t AccessBitsOffset() {
+    return OFFSETOF_MEMBER(mirror::Object, x_x3_access_bits_);
+  }
+  // jiacheng end
+
+  // marvin start
+  static ALWAYS_INLINE uint32_t GetBits32(uint32_t data, uint32_t offset, uint32_t width) {
+    return (data >> offset) & (0xffffffff >> (32 - width));
+  }
+  static ALWAYS_INLINE void SetBits32(uint32_t * data, uint32_t offset, uint32_t width) {
+    *data = *data | ((0xffffffff >> (32 - width)) << offset);
+  }
+  static ALWAYS_INLINE void ClearBits32(uint32_t * data, uint32_t offset, uint32_t width) {
+    *data = *data & ~((0xffffffff >> (32 - width)) << offset);
+  }
+  static ALWAYS_INLINE void AssignBits32(uint32_t * data, uint32_t val, uint32_t offset, uint32_t width) {
+    ClearBits32(data, offset, width);
+    *data = *data | ((val << offset) & (0xffffffff >> (32 - width - offset)));
+  }
+
+  static ALWAYS_INLINE uint8_t GetBits8(uint8_t data, uint8_t offset, uint8_t width) {
+    return (data >> offset) & (0xff >> (8 - width));
+  }
+  static ALWAYS_INLINE void SetBits8(uint8_t * data, uint8_t offset, uint8_t width) {
+    *data = *data | ((0xff >> (8 - width)) << offset);
+  }
+  static ALWAYS_INLINE void ClearBits8(uint8_t * data, uint8_t offset, uint8_t width) {
+    *data = *data & ~((0xff >> (8 - width)) << offset);
+  }
+  static ALWAYS_INLINE void AssignBits8(uint8_t * data, uint8_t val, uint8_t offset, uint8_t width) {
+    ClearBits8(data, offset, width);
+    *data = *data | ((val << offset) & (0xff >> (8 - width - offset)));
+  }
+
+  static ALWAYS_INLINE uint8_t GetBitsAtomic8(const std::atomic<uint8_t> & data, uint8_t offset,
+                                uint8_t width, std::memory_order order) {
+    return (data.load(order) >> offset) & (0xff >> (8 - width));
+  }
+  static ALWAYS_INLINE void SetBitsAtomic8(std::atomic<uint8_t> & data, uint8_t offset, uint8_t width,
+                              std::memory_order order) {
+    data.fetch_or((0xff >> (8 - width) << offset), order);
+  }
+  static ALWAYS_INLINE void ClearBitsAtomic8(std::atomic<uint8_t> & data, uint8_t offset, uint8_t width,
+                                std::memory_order order) {
+    data.fetch_and(~((0xff >> (8 - width)) << offset), order);
+  }
+
+  static bool TestBitMethods();
+
+  /*
+   * Current layout of added header bytes:
+   *
+   * x_flags_:
+   * 7|6543|2|10
+   * s|----|n|--
+   *
+   * x_shift_regs_:
+   * 7654|3210
+   * rsr |wsr
+   *
+     * x_dirty_bit_:
+   * 7654321|0
+   * -------|d
+   *
+   * x_access_bits_:
+   * 76543|2|1|0
+   * -----|w|r|i
+   *
+   * s: stub flag
+   * w: write bit
+   * r: read bit
+   * n: no-swap flag
+   * i: ignore read flag
+   * d: dirty bit
+   * rsr: read shift register (for Clock working set estimation)
+   * wsr: write shift register (for Clock)
+   */
+
+  bool GetIgnoreReadFlag();
+  void SetIgnoreReadFlag();
+  void ClearIgnoreReadFlag();
+
+  bool GetWriteBit();
+  void SetWriteBit();
+  void ClearWriteBit();
+
+  bool GetReadBit();
+  void SetReadBit();
+  void ClearReadBit();
+
+  uint8_t GetWriteShiftRegister();
+  void UpdateWriteShiftRegister(bool written);
+
+  uint8_t GetReadShiftRegister();
+  void UpdateReadShiftRegister(bool read);
+
+  bool GetDirtyBit();
+  void SetDirtyBit();
+  void ClearDirtyBit();
+
+  bool GetStubFlag() const;
+
+  bool GetNoSwapFlag() const;
+  void SetNoSwapFlag();
+
+  uint32_t GetPadding();
+  void SetPadding(uint32_t val);
+
+  // jiacheng start
+  void CopyHeadFrom(Object* from_ref);
+  // jiacheng end
+  // marvin end
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
            ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
@@ -154,7 +355,11 @@ class MANAGED LOCKABLE Object {
   void SetLockWord(LockWord new_val, bool as_volatile) REQUIRES_SHARED(Locks::mutator_lock_);
   bool CasLockWord(LockWord old_val, LockWord new_val, CASMode mode, std::memory_order memory_order)
       REQUIRES_SHARED(Locks::mutator_lock_);
-  uint32_t GetLockOwnerThreadId();
+  // marvin start
+  // uint32_t GetLockOwnerThreadId();
+  uint32_t GetLockOwnerThreadId()
+      REQUIRES_SHARED(Locks::mutator_lock_);
+  // marvin end
 
   // Try to enter the monitor, returns non null if we succeeded.
   ObjPtr<mirror::Object> MonitorTryEnter(Thread* self)
@@ -353,6 +558,11 @@ class MANAGED LOCKABLE Object {
   template<typename kType, bool kIsVolatile>
   ALWAYS_INLINE void SetFieldPrimitive(MemberOffset field_offset, kType new_value)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE_VOID(SetFieldPrimitive, Object, GATHER_TEMPLATE_ARGS(kType, kIsVolatile), field_offset, new_value)
+    }
+    // marvin end
     uint8_t* raw_addr = reinterpret_cast<uint8_t*>(this) + field_offset.Int32Value();
     kType* addr = reinterpret_cast<kType*>(raw_addr);
     if (kIsVolatile) {
@@ -360,12 +570,36 @@ class MANAGED LOCKABLE Object {
     } else {
       reinterpret_cast<Atomic<kType>*>(addr)->StoreJavaData(new_value);
     }
+    // marvin start
+    SetWriteBit();
+    SetDirtyBit();
+    // marvin end
   }
 
+// jiacheng start
   template<typename kType, bool kIsVolatile>
   ALWAYS_INLINE kType GetFieldPrimitive(MemberOffset field_offset)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE(GetFieldPrimitive, Object, kType, GATHER_TEMPLATE_ARGS(kType, kIsVolatile), field_offset)
+    }
+    // Object* obj = reinterpret_cast<Object*>(this);
+    // if (UNLIKELY(GetStubFlag())) {
+    //   niel::swap::Stub * stub = (niel::swap::Stub *)this;
+    //   stub->LockTableEntry();
+    //   if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) {
+    //     niel::swap::SwapInOnDemand(stub);
+    //   }
+    //   obj = reinterpret_cast<Object*>(stub->GetObjectAddress());
+    //   stub->UnlockTableEntry();
+    // }
+    if (!GetIgnoreReadFlag()) {
+        SetReadBit();
+    }
+    // const uint8_t* raw_addr = reinterpret_cast<const uint8_t*>(obj) + field_offset.Int32Value();
     const uint8_t* raw_addr = reinterpret_cast<const uint8_t*>(this) + field_offset.Int32Value();
+    // marvin end
     const kType* addr = reinterpret_cast<const kType*>(raw_addr);
     if (kIsVolatile) {
       return reinterpret_cast<const Atomic<kType>*>(addr)->load(std::memory_order_seq_cst);
@@ -373,13 +607,21 @@ class MANAGED LOCKABLE Object {
       return reinterpret_cast<const Atomic<kType>*>(addr)->LoadJavaData();
     }
   }
+// jiacheng end
 
+// jiacheng debug start
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags, bool kIsVolatile = false>
   ALWAYS_INLINE uint8_t GetFieldBoolean(MemberOffset field_offset)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE(GetFieldBoolean, Object, uint8_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+    }
+    // marvin end
     Verify<kVerifyFlags>();
     return GetFieldPrimitive<uint8_t, kIsVolatile>(field_offset);
   }
+  // jiacheng debug end
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags, bool kIsVolatile = false>
   ALWAYS_INLINE int8_t GetFieldByte(MemberOffset field_offset)
@@ -461,12 +703,20 @@ class MANAGED LOCKABLE Object {
   ALWAYS_INLINE void SetFieldShortVolatile(MemberOffset field_offset, int16_t new_value)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
+// jiacheng debug start
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags, bool kIsVolatile = false>
   ALWAYS_INLINE int32_t GetField32(MemberOffset field_offset)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE(GetField32, Object, int32_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+    }
+    // marvin end
     Verify<kVerifyFlags>();
     return GetFieldPrimitive<int32_t, kIsVolatile>(field_offset);
   }
+// jiacheng debug end
+
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
   ALWAYS_INLINE int32_t GetField32Volatile(MemberOffset field_offset)
@@ -506,6 +756,11 @@ class MANAGED LOCKABLE Object {
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags, bool kIsVolatile = false>
   ALWAYS_INLINE int64_t GetField64(MemberOffset field_offset)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE(GetField64, Object, int64_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+    }
+    // marvin end
     Verify<kVerifyFlags>();
     return GetFieldPrimitive<int64_t, kIsVolatile>(field_offset);
   }
@@ -677,9 +932,22 @@ class MANAGED LOCKABLE Object {
     return GetFieldPtrWithSize<T, kVerifyFlags, kIsVolatile>(field_offset, PointerSize::k64);
   }
 
+// jiacheng debug start
   template<class T, VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags, bool kIsVolatile = false>
   ALWAYS_INLINE T GetFieldPtrWithSize(MemberOffset field_offset, PointerSize pointer_size)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    if (field_offset.Uint32Value() >= sizeof(Object)) {
+      SWAP_PREAMBLE_TEMPLATE(GetFieldPtrWithSize, Object, T, GATHER_TEMPLATE_ARGS(T, kVerifyFlags, kIsVolatile), field_offset, pointer_size)
+    }
+    // marvin end
+    // if (pointer_size == PointerSize::k32) {
+    //   int32_t v = obj->GetField32<kVerifyFlags, kIsVolatile>(field_offset);
+    //   return reinterpret_cast32<T>(v);
+    // } else {
+    //   int64_t v = obj->GetField64<kVerifyFlags, kIsVolatile>(field_offset);
+    //   return reinterpret_cast64<T>(v);
+    // }
     if (pointer_size == PointerSize::k32) {
       int32_t v = GetField32<kVerifyFlags, kIsVolatile>(field_offset);
       return reinterpret_cast32<T>(v);
@@ -688,6 +956,7 @@ class MANAGED LOCKABLE Object {
       return reinterpret_cast64<T>(v);
     }
   }
+// jiacheng debug end
 
   // TODO: Fixme when anotatalysis works with visitors.
   template<bool kIsStatic,
@@ -774,6 +1043,28 @@ class MANAGED LOCKABLE Object {
   HeapReference<Class> klass_;
   // Monitor and hash code information.
   uint32_t monitor_;
+
+  // marvin start
+  // Names use 'x' prefix for the same reason that the Brooks variables defined
+  // below do. See the block comment near the top of this file for info about the
+  // layout of these variables.
+  
+  // jiacheng start
+  // uint32_t x_padding_;  // +8
+  // std::atomic<uint8_t> x_x0_flags_;  // +12
+  // uint8_t x_x1_shift_regs_;  // +13
+  // std::atomic<uint8_t> x_x2_dirty_bit_; // +14
+  // uint8_t x_x3_access_bits_;  // +15
+
+  uint32_t x_padding_;  // +8
+  std::atomic<uint8_t> x_x0_flags_;  // +12
+  uint8_t x_x1_shift_regs_;  // +13
+  std::atomic<uint8_t> x_x2_dirty_bit_; // +14
+  uint8_t x_x3_access_bits_;  // +15
+
+  // jiacheng end
+
+  // marvin end
 
 #ifdef USE_BROOKS_READ_BARRIER
   // Note names use a 'x' prefix and the x_rb_ptr_ is of type int

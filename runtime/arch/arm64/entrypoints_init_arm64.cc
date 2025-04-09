@@ -29,6 +29,11 @@
 #include "entrypoints/runtime_asm_entrypoints.h"
 #include "interpreter/interpreter.h"
 
+// marvin start
+#include "niel_stub.h"
+#include "niel_swap.h"
+// marvin end
+
 namespace art {
 
 // Cast entrypoints.
@@ -192,6 +197,11 @@ void InitEntryPoints(JniEntryPoints* jpoints, QuickEntryPoints* qpoints) {
   UpdateReadBarrierEntrypoints(qpoints, /*is_active=*/ false);
   qpoints->pReadBarrierSlow = artReadBarrierSlow;
   qpoints->pReadBarrierForRootSlow = artReadBarrierForRootSlow;
+
+  // marvin start
+  qpoints->pSwapInOnDemand = niel::swap::SwapInOnDemand;
+  qpoints->pPopulateStub = niel::swap::PopulateStub;
+  // marvin end
 }
 
 }  // namespace art

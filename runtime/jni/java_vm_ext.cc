@@ -665,6 +665,14 @@ jobject JavaVMExt::AddGlobalRef(Thread* self, ObjPtr<mirror::Object> obj) {
   if (obj == nullptr) {
     return nullptr;
   }
+  // marvin start
+  // Added by Niel: we avoid swapping out objects to which there are global references
+  // (the alternative is to modify the IndirectRef to point to the stub, but I'm not sure
+  // how feasible that is or if that will actually work). Right now, if a global reference
+  // is created for an object, that object is left permanently unswappable, but it might
+  // be possible to re-enable swapping for an object if all global references are gone.
+  obj->SetNoSwapFlag();
+  // marvin end
   IndirectRef ref;
   std::string error_msg;
   {
@@ -683,6 +691,11 @@ jweak JavaVMExt::AddWeakGlobalRef(Thread* self, ObjPtr<mirror::Object> obj) {
   if (obj == nullptr) {
     return nullptr;
   }
+  // marvin start
+  // Added by Niel: for now, we also avoid swapping out objects to which there are weak
+  // global references.
+  obj->SetNoSwapFlag();
+  // marvin end
   MutexLock mu(self, *Locks::jni_weak_globals_lock_);
   // CMS needs this to block for concurrent reference processing because an object allocated during
   // the GC won't be marked and concurrent reference processing would incorrectly clear the JNI weak

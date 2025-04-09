@@ -179,6 +179,9 @@ ALWAYS_INLINE static bool ShouldDenyAccessToMember(
     Thread* self,
     hiddenapi::AccessMethod access_kind = hiddenapi::AccessMethod::kJNI)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  // jiacheng start
+  return false;
+  // jiacheng end
   return hiddenapi::ShouldDenyAccessToMember(
       member,
       [self]() REQUIRES_SHARED(Locks::mutator_lock_) { return GetJniAccessContext(self); },

@@ -152,6 +152,9 @@ class CopyObjectVisitor {
 };
 
 ObjPtr<Object> Object::Clone(Handle<Object> h_this, Thread* self) {
+  // marvin start
+  // SWAP_PREAMBLE(Clone, Object, ObjPtr<Object>, self)
+  // marvin end
   CHECK(!h_this->IsClass()) << "Can't clone classes.";
   // Object::SizeOf gets the right size even if we're an array. Using c->AllocObject() here would
   // be wrong.
@@ -182,6 +185,9 @@ void Object::SetHashCodeSeed(uint32_t new_seed) {
 }
 
 int32_t Object::IdentityHashCode() {
+  // marvin start
+  SWAP_PREAMBLE(IdentityHashCode, Object, int32_t, )
+  // marvin end
   ObjPtr<Object> current_this = this;  // The this pointer may get invalidated by thread suspension.
   while (true) {
     LockWord lw = current_this->GetLockWord(false);
@@ -227,6 +233,11 @@ int32_t Object::IdentityHashCode() {
 }
 
 void Object::CheckFieldAssignmentImpl(MemberOffset field_offset, ObjPtr<Object> new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_VOID(CheckFieldAssignmentImpl, Object, field_offset, new_value)
+  }
+  // marvin end
   ObjPtr<Class> c = GetClass();
   Runtime* runtime = Runtime::Current();
   if (runtime->GetClassLinker() == nullptr || !runtime->IsStarted() ||
@@ -271,6 +282,9 @@ void Object::CheckFieldAssignmentImpl(MemberOffset field_offset, ObjPtr<Object> 
 }
 
 ArtField* Object::FindFieldByOffset(MemberOffset offset) {
+  // marvin start
+  SWAP_PREAMBLE(FindFieldByOffset, Object, ArtField*, offset)
+  // marvin end
   return IsClass() ? ArtField::FindStaticFieldWithOffset(AsClass(), offset.Uint32Value())
       : ArtField::FindInstanceFieldWithOffset(GetClass(), offset.Uint32Value());
 }
@@ -294,6 +308,206 @@ std::string Object::PrettyTypeOf() {
   }
   return result;
 }
+
+// marvin start
+bool Object::TestBitMethods() {
+  const int NUM_TESTS = 15;
+  uint32_t result[NUM_TESTS];
+  uint32_t expected[NUM_TESTS];
+
+  bool passed = true;
+
+  uint32_t data0 = 0xabcdef12;
+  result[0] = GetBits32(data0, 4, 12);
+  expected[0] = 0xef1;
+
+  uint32_t data1 = 0xffffffff;
+  result[1] = GetBits32(data1, 17, 7);
+  expected[1] = 0x7f;
+
+  uint32_t data2 = 0x00000000;
+  SetBits32(&data2, 4, 12);
+  result[2] = data2;
+  expected[2] = 0x0000fff0;
+
+  uint32_t data3 = 0x00000000;
+  SetBits32(&data3, 17, 7);
+  result[3] = data3;
+  expected[3] = 0x00fe0000;
+
+  uint32_t data4 = 0xffffffff;
+  ClearBits32(&data4, 4, 12);
+  result[4] = data4;
+  expected[4] = 0xffff000f;
+
+  uint32_t data5 = 0xffffffff;
+  ClearBits32(&data5, 17, 7);
+  result[5] = data5;
+  expected[5] = 0xff01ffff;
+
+  uint32_t data6 = 0xabcdef12;
+  AssignBits32(&data6, 0x88888, 4, 12);
+  result[6] = data6;
+  expected[6] = 0xabcd8882;
+
+  uint32_t data7 = 0xffffffff;
+  AssignBits32(&data7, 0xe, 16, 8);
+  result[7] = data7;
+  expected[7] = 0xff0effff;
+
+  uint8_t data8 = 0xd9; // 11011001
+  result[8] = GetBits8(data8, 2, 4);
+  expected[8] = 6; // 0110
+
+  uint8_t data9 = 0x00;
+  SetBits8(&data9, 5, 2);
+  result[9] = data9;
+  expected[9] = 0x60; // 01100000
+
+  uint8_t data10 = 0xff;
+  ClearBits8(&data10, 3, 3);
+  result[10] = data10;
+  expected[10] = 0xc7; // 11000111
+
+  uint8_t data11 = 0xbb; // 10111011
+  AssignBits8(&data11, 0x1, 1, 4);
+  result[11] = data11;
+  expected[11] = 0xa3; // 10100011
+
+  // values from test 8 above
+  std::atomic<uint8_t> data12(0xd9);
+  result[12] = GetBitsAtomic8(data12, 2, 4, std::memory_order_seq_cst);
+  expected[12] = 6;
+
+  // values from test 9 above
+  std::atomic<uint8_t> data13(0x00);
+  SetBitsAtomic8(data13, 5, 2, std::memory_order_seq_cst);
+  result[13] = data13.load();
+  expected[13] = 0x60;
+
+  // values from test 10 above
+  std::atomic<uint8_t> data14(0xff);
+  ClearBitsAtomic8(data14, 3, 3, std::memory_order_seq_cst);
+  result[14] = data14.load();
+  expected[14] = 0xc7;
+
+  for (int i = 0; i < NUM_TESTS; i++) {
+      if (result[i] != expected[i]) {
+          passed = false;
+          LOG(ERROR) << "Object::TestBitMethods(): test " << i << " failed";
+      }
+  }
+  return passed;
+}
+
+
+bool Object::GetIgnoreReadFlag() {
+  if (Runtime::Current()->IsSystemServer()) return true;
+  return (bool)GetBits8(x_x3_access_bits_, 0, 1);
+}
+void Object::SetIgnoreReadFlag() {
+  if (Runtime::Current()->IsSystemServer()) return;
+  SetBits8(&x_x3_access_bits_, 0, 1);
+}
+void Object::ClearIgnoreReadFlag() {
+  if (Runtime::Current()->IsSystemServer()) return;
+  ClearBits8(&x_x3_access_bits_, 0, 1);
+}
+
+bool Object::GetWriteBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return false;
+  return (bool)GetBits8(x_x3_access_bits_, 2, 1);
+}
+void Object::SetWriteBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return;
+  SetBits8(&x_x3_access_bits_, 2, 1);
+}
+void Object::ClearWriteBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return;
+  ClearBits8(&x_x3_access_bits_, 2, 1);
+}
+
+bool Object::GetReadBit() {
+  if (Runtime::Current()->IsSystemServer()) return false;
+  return (bool)GetBits8(x_x3_access_bits_, 1, 1);
+}
+void Object::SetReadBit() {
+  if (Runtime::Current()->IsSystemServer()) return;
+  SetBits8(&x_x3_access_bits_, 1, 1);
+}
+void Object::ClearReadBit() {
+  if (Runtime::Current()->IsSystemServer()) return;
+  ClearBits8(&x_x3_access_bits_, 1, 1);
+}
+
+
+uint8_t Object::GetWriteShiftRegister() {
+  if (Runtime::Current()->IsSystemServer()) return 0;
+  return GetBits8(x_x1_shift_regs_, 0, 4);
+}
+void Object::UpdateWriteShiftRegister(bool written) {
+  if (Runtime::Current()->IsSystemServer()) return;
+  uint8_t oldVal = GetWriteShiftRegister();
+  uint8_t newVal = (oldVal >> 1) | ((uint8_t)written << (4 - 1));
+  AssignBits8(&x_x1_shift_regs_, newVal, 0, 4);
+}
+
+uint8_t Object::GetReadShiftRegister() {
+  if (Runtime::Current()->IsSystemServer()) return 0;
+  return GetBits8(x_x1_shift_regs_, 4, 4);
+}
+void Object::UpdateReadShiftRegister(bool read) {
+  if (Runtime::Current()->IsSystemServer()) return;
+  uint8_t oldVal = GetReadShiftRegister();
+  uint8_t newVal = (oldVal >> 1) | ((uint8_t)read << (4 - 1));
+  AssignBits8(&x_x1_shift_regs_, newVal, 4, 4);
+}
+
+bool Object::GetDirtyBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return false;
+  return (bool)x_x2_dirty_bit_.load(std::memory_order_acquire);
+}
+void Object::SetDirtyBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return;
+  x_x2_dirty_bit_.store(1, std::memory_order_release);
+}
+void Object::ClearDirtyBit() {
+  if (Runtime::Current()->IsSystemServer() || !Runtime::Current()->IsStarted()) return;
+  x_x2_dirty_bit_.store(0, std::memory_order_release);
+}
+
+bool Object::GetStubFlag() const {
+  if (Runtime::Current()->IsSystemServer()) return false;
+  return (bool)GetBitsAtomic8(x_x0_flags_, 7, 1, std::memory_order_acquire);
+}
+
+bool Object::GetNoSwapFlag() const {
+  if (Runtime::Current()->IsSystemServer()) return true;
+  return (bool)GetBitsAtomic8(x_x0_flags_, 2, 1, std::memory_order_acquire);
+}
+void Object::SetNoSwapFlag() {
+  if (Runtime::Current()->IsSystemServer()) return;
+  SetBitsAtomic8(x_x0_flags_, 2, 1, std::memory_order_acq_rel);
+}
+
+uint32_t Object::GetPadding() {
+  return x_padding_;
+}
+void Object::SetPadding(uint32_t val) {
+  if (Runtime::Current()->IsSystemServer()) return;
+  x_padding_ = val;
+}
+
+// jiacheng start
+void Object::CopyHeadFrom(Object* from_ref) {
+  x_padding_ = from_ref->x_padding_;  // +8
+  x_x0_flags_ = from_ref->x_x0_flags_.load();  // +12
+  x_x1_shift_regs_ = from_ref->x_x1_shift_regs_;  // +13
+  x_x2_dirty_bit_ = from_ref->x_x2_dirty_bit_.load(); // +14
+  x_x3_access_bits_ = from_ref->x_x3_access_bits_;  // +15
+}
+// jiacheng end
+// marvin end
 
 }  // namespace mirror
 }  // namespace art

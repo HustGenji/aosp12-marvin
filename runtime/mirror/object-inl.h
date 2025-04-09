@@ -12,6 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ * 
+ * // marvin start
+  *
+  * Note from Niel: SWAP_PREAMBLE macro calls were added to this file
+  * automatically using the script insert-object-hooks.pl. This script is
+  * in my "android-swap-code" repository in the "swap-hook-generation"
+  * folder.
+ // marvin end
  */
 
 #ifndef ART_RUNTIME_MIRROR_OBJECT_INL_H_
@@ -40,6 +48,10 @@
 #include "string.h"
 #include "throwable.h"
 #include "write_barrier-inl.h"
+
+// marvin start
+#include "niel_swap.h"
+// marvin end
 
 namespace art {
 namespace mirror {
@@ -347,6 +359,10 @@ inline bool Object::IsPhantomReferenceInstance() {
 
 template<VerifyObjectFlags kVerifyFlags>
 inline size_t Object::SizeOf() {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE(SizeOf, Object, size_t, GATHER_TEMPLATE_ARGS(kVerifyFlags), )
+  // marvin end
+
   // Read barrier is never required for SizeOf since objects sizes are constant. Reading from-space
   // values is OK because of that.
   size_t result;
@@ -372,6 +388,11 @@ inline size_t Object::SizeOf() {
 
 template<VerifyObjectFlags kVerifyFlags, bool kIsVolatile>
 inline int8_t Object::GetFieldByte(MemberOffset field_offset) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(GetFieldByte, Object, int8_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+  }
+  // marvin end
   Verify<kVerifyFlags>();
   return GetFieldPrimitive<int8_t, kIsVolatile>(field_offset);
 }
@@ -391,6 +412,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetFieldBoolean(MemberOffset field_offset, uint8_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetFieldBoolean, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteFieldBoolean(
@@ -408,6 +434,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetFieldByte(MemberOffset field_offset, int8_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetFieldByte, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteFieldByte(this,
@@ -433,12 +464,22 @@ inline void Object::SetFieldByteVolatile(MemberOffset field_offset, int8_t new_v
 
 template<VerifyObjectFlags kVerifyFlags, bool kIsVolatile>
 inline uint16_t Object::GetFieldChar(MemberOffset field_offset) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(GetFieldChar, Object, uint16_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+  }
+  // marvin end
   Verify<kVerifyFlags>();
   return GetFieldPrimitive<uint16_t, kIsVolatile>(field_offset);
 }
 
 template<VerifyObjectFlags kVerifyFlags, bool kIsVolatile>
 inline int16_t Object::GetFieldShort(MemberOffset field_offset) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(GetFieldShort, Object, int16_t, GATHER_TEMPLATE_ARGS(kVerifyFlags, kIsVolatile), field_offset)
+  }
+  // marvin end
   Verify<kVerifyFlags>();
   return GetFieldPrimitive<int16_t, kIsVolatile>(field_offset);
 }
@@ -458,6 +499,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetFieldChar(MemberOffset field_offset, uint16_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetFieldChar, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteFieldChar(this,
@@ -474,6 +520,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetFieldShort(MemberOffset field_offset, int16_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetFieldShort, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteFieldChar(this,
@@ -502,6 +553,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetField32(MemberOffset field_offset, int32_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetField32, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteField32(this,
@@ -532,6 +588,11 @@ template<bool kTransactionActive,
          VerifyObjectFlags kVerifyFlags,
          bool kIsVolatile>
 inline void Object::SetField64(MemberOffset field_offset, int64_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetField64, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile), field_offset, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteField64(this,
@@ -545,6 +606,11 @@ inline void Object::SetField64(MemberOffset field_offset, int64_t new_value) {
 
 template<bool kTransactionActive, bool kCheckTransaction, VerifyObjectFlags kVerifyFlags>
 inline void Object::SetField64Volatile(MemberOffset field_offset, int64_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE_VOID(SetField64Volatile, Object, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags), field_offset, new_value)
+  }
+  // marvin end
   return SetField64<kTransactionActive, kCheckTransaction, kVerifyFlags, true>(field_offset,
                                                                                new_value);
 }
@@ -569,6 +635,11 @@ template<bool kTransactionActive, bool kCheckTransaction, VerifyObjectFlags kVer
 inline bool Object::CasFieldWeakSequentiallyConsistent64(MemberOffset field_offset,
                                                          int64_t old_value,
                                                          int64_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(CasFieldWeakSequentiallyConsistent64, Object, bool, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags), field_offset, old_value, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteField64(this, field_offset, old_value, true);
@@ -583,6 +654,11 @@ template<bool kTransactionActive, bool kCheckTransaction, VerifyObjectFlags kVer
 inline bool Object::CasFieldStrongSequentiallyConsistent64(MemberOffset field_offset,
                                                            int64_t old_value,
                                                            int64_t new_value) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(CasFieldStrongSequentiallyConsistent64, Object, bool, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags), field_offset, old_value, new_value)
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     Runtime::Current()->RecordWriteField64(this, field_offset, old_value, true);
@@ -602,6 +678,17 @@ template<class T,
          ReadBarrierOption kReadBarrierOption,
          bool kIsVolatile>
 inline T* Object::GetFieldObject(MemberOffset field_offset) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(GetFieldObject, Object, T*, GATHER_TEMPLATE_ARGS(T, kVerifyFlags, kReadBarrierOption, kIsVolatile), field_offset)
+  }
+  // marvin end
+
+  // marvin start
+  if (!GetIgnoreReadFlag()) {
+      SetReadBit();
+  }
+  // marvin end
   Verify<kVerifyFlags>();
   uint8_t* raw_addr = reinterpret_cast<uint8_t*>(this) + field_offset.Int32Value();
   HeapReference<T>* objref_addr = reinterpret_cast<HeapReference<T>*>(raw_addr);
@@ -624,6 +711,21 @@ template<bool kTransactionActive,
          bool kIsVolatile>
 inline void Object::SetFieldObjectWithoutWriteBarrier(MemberOffset field_offset,
                                                       ObjPtr<Object> new_value) {
+  // marvin start
+  if (UNLIKELY(GetStubFlag())) {
+    niel::swap::Stub * stub = (niel::swap::Stub *)this;
+    stub->LockTableEntry();
+    if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) {
+      niel::swap::SwapInOnDemand(stub);
+    }
+    ((Object *)(stub->GetObjectAddress()))->SetFieldObjectWithoutWriteBarrier
+        <kTransactionActive, kCheckTransaction, kVerifyFlags, kIsVolatile>
+        (field_offset, new_value);
+    stub->PopulateFrom(stub->GetObjectAddress());
+    stub->UnlockTableEntry();
+    return;
+  }
+  // marvin end
   VerifyTransaction<kTransactionActive, kCheckTransaction>();
   if (kTransactionActive) {
     ObjPtr<Object> obj;
@@ -639,6 +741,10 @@ inline void Object::SetFieldObjectWithoutWriteBarrier(MemberOffset field_offset,
   uint8_t* raw_addr = reinterpret_cast<uint8_t*>(this) + field_offset.Int32Value();
   HeapReference<Object>* objref_addr = reinterpret_cast<HeapReference<Object>*>(raw_addr);
   objref_addr->Assign<kIsVolatile>(new_value.Ptr());
+  // marvin start
+  SetWriteBit();
+  SetDirtyBit();
+  // marvin end
 }
 
 template<bool kTransactionActive,
@@ -672,6 +778,11 @@ inline void Object::SetFieldObjectTransaction(MemberOffset field_offset, ObjPtr<
 
 template <VerifyObjectFlags kVerifyFlags>
 inline HeapReference<Object>* Object::GetFieldObjectReferenceAddr(MemberOffset field_offset) {
+  // marvin start
+  if (field_offset.Uint32Value() >= sizeof(Object)) {
+    SWAP_PREAMBLE_TEMPLATE(GetFieldObjectReferenceAddr, Object, HeapReference<Object>*, GATHER_TEMPLATE_ARGS(kVerifyFlags), field_offset)
+  }
+  // marvin end
   Verify<kVerifyFlags>();
   return reinterpret_cast<HeapReference<Object>*>(reinterpret_cast<uint8_t*>(this) +
       field_offset.Int32Value());
@@ -865,6 +976,9 @@ template<bool kIsStatic,
          ReadBarrierOption kReadBarrierOption,
          typename Visitor>
 inline void Object::VisitFieldsReferences(uint32_t ref_offsets, const Visitor& visitor) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE_VOID(VisitFieldsReferences, Object, GATHER_TEMPLATE_ARGS(kIsStatic, kVerifyFlags, kReadBarrierOption, Visitor), ref_offsets, visitor)
+  // marvin end
   if (!kIsStatic && (ref_offsets != mirror::Class::kClassWalkSuper)) {
     // Instance fields and not the slow-path.
     uint32_t field_offset = mirror::kObjectHeaderSize;
@@ -915,6 +1029,9 @@ inline void Object::VisitInstanceFieldsReferences(ObjPtr<Class> klass, const Vis
 
 template<VerifyObjectFlags kVerifyFlags, ReadBarrierOption kReadBarrierOption, typename Visitor>
 inline void Object::VisitStaticFieldsReferences(ObjPtr<Class> klass, const Visitor& visitor) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE_VOID(VisitStaticFieldsReferences, Object, GATHER_TEMPLATE_ARGS(kVerifyFlags, kReadBarrierOption, Visitor), klass, visitor)
+  // marvin end
   DCHECK(!klass->IsTemp<kVerifyFlags>());
   klass->VisitFieldsReferences<true, kVerifyFlags, kReadBarrierOption>(0, visitor);
 }
@@ -926,6 +1043,9 @@ inline bool Object::IsClassLoader() {
 
 template<VerifyObjectFlags kVerifyFlags, ReadBarrierOption kReadBarrierOption>
 inline ObjPtr<ClassLoader> Object::AsClassLoader() {
+  // marvin start
+  // SWAP_PREAMBLE_TEMPLATE(AsClassLoader, Object, ObjPtr<ClassLoader>, GATHER_TEMPLATE_ARGS(kVerifyFlags, kReadBarrierOption), )
+  // marvin end
   DCHECK((IsClassLoader<kVerifyFlags, kReadBarrierOption>()));
   return ObjPtr<ClassLoader>::DownCast(this);
 }

@@ -150,7 +150,10 @@ class ClassLinkerTest : public CommonRuntimeTest {
     EXPECT_EQ(4U, JavaLangObject->NumDirectMethods());
     EXPECT_EQ(11U, JavaLangObject->NumVirtualMethods());
     if (!kUseBrooksReadBarrier) {
-      EXPECT_EQ(2U, JavaLangObject->NumInstanceFields());
+      // jiacheng start
+      // EXPECT_EQ(2U, JavaLangObject->NumInstanceFields());
+      EXPECT_EQ(4U, JavaLangObject->NumInstanceFields());
+      // jiacheng end
     } else {
       EXPECT_EQ(4U, JavaLangObject->NumInstanceFields());
     }
@@ -158,6 +161,18 @@ class ClassLinkerTest : public CommonRuntimeTest {
                  "shadow$_klass_");
     EXPECT_STREQ(JavaLangObject->GetInstanceField(1)->GetName(),
                  "shadow$_monitor_");
+    // jiacheng start
+    EXPECT_STREQ(JavaLangObject->GetInstanceField(2)->GetName(),
+                 "shadow$_x_padding_");
+    EXPECT_STREQ(JavaLangObject->GetInstanceField(3)->GetName(),
+                 "shadow$_x_x0_flags_");
+    EXPECT_STREQ(JavaLangObject->GetInstanceField(4)->GetName(),
+                "shadow$_x_x1_shift_regs_");
+    EXPECT_STREQ(JavaLangObject->GetInstanceField(5)->GetName(),
+                "shadow$_x_x2_dirty_bit_");
+    EXPECT_STREQ(JavaLangObject->GetInstanceField(6)->GetName(),
+                "shadow$_x_x3_access_bits_");
+    // jiacheng end
     if (kUseBrooksReadBarrier) {
       EXPECT_STREQ(JavaLangObject->GetInstanceField(2)->GetName(),
                    "shadow$_x_rb_ptr_");
@@ -571,6 +586,13 @@ struct ObjectOffsets : public CheckOffsets<mirror::Object> {
   ObjectOffsets() : CheckOffsets<mirror::Object>(false, "Ljava/lang/Object;") {
     addOffset(OFFSETOF_MEMBER(mirror::Object, klass_), "shadow$_klass_");
     addOffset(OFFSETOF_MEMBER(mirror::Object, monitor_), "shadow$_monitor_");
+    // jiacheng start
+    addOffset(OFFSETOF_MEMBER(mirror::Object, x_padding_), "shadow$_x_padding_");
+    addOffset(OFFSETOF_MEMBER(mirror::Object, x_x0_flags_), "shadow$_x_x0_flags_");
+    addOffset(OFFSETOF_MEMBER(mirror::Object, x_x1_shift_regs_), "shadow$_x_x1_shift_regs_");
+    addOffset(OFFSETOF_MEMBER(mirror::Object, x_x2_dirty_bit_), "shadow$_x_x2_dirty_bit_");
+    addOffset(OFFSETOF_MEMBER(mirror::Object, x_x3_access_bits_), "shadow$_x_x3_access_bits_");
+    // jiacheng end
 #ifdef USE_BROOKS_READ_BARRIER
     addOffset(OFFSETOF_MEMBER(mirror::Object, x_rb_ptr_), "shadow$_x_rb_ptr_");
     addOffset(OFFSETOF_MEMBER(mirror::Object, x_xpadding_), "shadow$_x_xpadding_");

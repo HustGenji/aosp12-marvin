@@ -1002,6 +1002,13 @@ Thread* ThreadList::SuspendThreadByThreadId(uint32_t thread_id,
   *timed_out = false;
   Thread* suspended_thread = nullptr;
   Thread* const self = Thread::Current();
+
+   // jiacheng start
+   if (thread_id == kInvalidThreadId) {
+    LOG(INFO) << "jiacheng SuspendThreadByThreadId() "
+              << " self->GetTid()= " << self->GetTid();
+  }
+  // jiacheng end
   CHECK_NE(thread_id, kInvalidThreadId);
   VLOG(threads) << "SuspendThreadByThreadId starting";
   while (true) {

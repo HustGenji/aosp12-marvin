@@ -163,6 +163,78 @@ inline void Heap::VisitObjectsInternal(Visitor&& visitor) {
   }
 }
 
+// jiacheng start
+template <typename Visitor>
+void Heap::PatchStubVisitObjects(Visitor&& visitor, Heap::WalkCallback callback) {
+  Thread* self = Thread::Current();
+  Locks::mutator_lock_->AssertExclusiveHeld(self);
+
+
+  LOG(INFO) << "jiacheng debug heap-visit-objects-inl.h 184 allocation_stack_->Walk()";
+  for (auto* it = allocation_stack_->Begin(), *end = allocation_stack_->End(); it < end; ++it) {
+    mirror::Object* const obj = it->AsMirrorPtr();
+
+    mirror::Class* kls = nullptr;
+    if (obj != nullptr && (kls = obj->GetClass()) != nullptr) {
+      if (!kUseReadBarrier) {
+        mirror::Class* klsClass = kls->GetClass();
+
+        if (klsClass == nullptr) {
+          continue;
+        } else if (klsClass->GetClass() != klsClass) {
+          continue;
+        }
+      } else {
+        CHECK(Heap::rosalloc_space_ == nullptr)
+            << "unexpected rosalloc with read barriers";
+        CHECK(kls->GetClass() != nullptr)
+            << "invalid object: class does not have a class";
+        CHECK_EQ(kls->GetClass()->GetClass(), kls->GetClass())
+            << "invalid object: class's class is not ClassClass";
+      }
+      visitor(obj);
+    }
+  }
+
+  LOG(INFO) << "jiacheng debug heap-visit-objects-inl.h 178 large_object_space_->Walk()";
+  if (large_object_space_ != nullptr) {
+    large_object_space_->Walk(callback, nullptr);
+  }
+
+
+  LOG(INFO) << "jiacheng debug heap-visit-objects-inl.h 172 region_space_->Walk()";
+  if (region_space_ != nullptr) {
+    region_space_->Walk(visitor);
+  }
+
+  // if (non_moving_space_ != nullptr) {
+  //   non_moving_space_->Walk(callback, nullptr);
+  // }
+
+  // if (zygote_space_ != nullptr) {
+  //   zygote_space_->Walk();
+  // }
+
+  // if (boot_image_spaces_ != nullptr) {
+  //   zygote_space_->Walk();
+  // }
+
+
+  // if (bump_pointer_space_ != nullptr) {
+  //   bump_pointer_space_->Walk(visitor);
+  // }
+
+  // if (rosalloc_space_ != nullptr) {
+  //   rosalloc_space_->Walk(callback, nullptr);
+  // }
+
+  // {
+  //   ReaderMutexLock mu(Thread::Current(), *Locks::heap_bitmap_lock_);
+  //   GetLiveBitmap()->Visit<Visitor>(visitor);
+  // }
+}
+// jiacheng end
+
 }  // namespace gc
 }  // namespace art
 

@@ -4700,6 +4700,543 @@ void CodeGeneratorARM64::GenerateStaticOrDirectCall(
   DCHECK(!IsLeafMethod());
 }
 
+// marvin start
+void CodeGeneratorARM64::GenerateLockReclamationTableEntry(Register tableEntryReg, Register temp) {
+ 
+  vixl::aarch64::Label kernelLockBit1Label;
+  vixl::aarch64::Label kernelLockBit2Label;
+
+  // Spin until the kernel lock bit is 0
+  __ Bind(&kernelLockBit1Label);
+  Load(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 0)); // temp now holds table_entry_->bit_flags_
+  __ Lsr(temp, temp, niel::swap::KERNEL_LOCK_BIT_OFFSET); // temp now holds the table entry's kernel lock bit
+  __ And(temp, temp, 0x1);
+  __ Cbnz(temp, &kernelLockBit1Label);
+
+  // Increment the app lock counter
+  Load(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 1)); // temp now holds the table entry's app lock counter
+  __ Add(temp, temp, 1);
+  Store(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 1));
+
+  /*
+   * I believe adding a DMB barrier after the write to the app lock counter
+   * here and using C++ atomics in the interpreter code that locks RTEs (in
+   * niel_reclamation_table.h) together provide the necessary ordering
+   * guarantees for the RTE locking protocol to work correctly. According to
+   * the "ARM Architecture Reference Manual ARMv8" (version D.a), a write with
+   * release semantics followed by a read with acquire semantics provides
+   * barrier-ordered-before ordering equivalent to using a DMB barrier.
+   *
+   * The RTE locking protocol is essentially a simpler version of Dekker's
+   * algorithm (it's simpler because the kernel always gives up when it
+   * contends with an app thread).
+   */
+
+  // Barrier
+  __ Dmb(FullSystem, BarrierAll);
+
+  // Spin until the kernel lock bit is 0
+  __ Bind(&kernelLockBit2Label);
+  Load(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 0)); // temp now holds table_entry_->bit_flags_
+  __ Lsr(temp, temp, niel::swap::KERNEL_LOCK_BIT_OFFSET); // temp now holds the table entry's kernel lock bit
+  __ And(temp, temp, 0x1);
+  __ Cbnz(temp, &kernelLockBit2Label);
+}
+
+void CodeGeneratorARM64::GenerateUnlockReclamationTableEntry(Register tableEntryReg, Register temp) {
+  // Decrement the app lock counter
+  Load(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 1)); // temp now holds the table entry's app lock counter
+  __ Sub(temp, temp, 1);
+  Store(DataType::Type::kBool, temp, MemOperand(tableEntryReg, 1));
+}
+
+void CodeGeneratorARM64::GenerateStubCheckAndSwapCode(Register objectReg,
+      const std::vector<CPURegister> & registersToMaybeSave, LocationSummary * locations) {
+  UseScratchRegisterScope temps(GetVIXLAssembler());
+  
+  vixl::aarch64::Label stubCheckDoneLabel;
+  vixl::aarch64::Label swapDoneLabel;
+
+  // If no temp register is available, the UseScratchRegisterScope will return
+  // a register of type kNoRegister, but when it gets converted to a
+  // W register, its type is lost, and it becomes a normal W register with
+  // code 0
+  Register temp = temps.AcquireX();
+  CHECK(temp.GetCode() != 0);
+
+  Register temp2 = temps.AcquireW();
+  CHECK(temp2.GetCode() != 0);
+
+  // Read stub flag of object
+  // jiacheng start
+  // Load(DataType::Type::kBool, temp.W(), MemOperand(objectReg.X(), 8)); // temp now holds flags byte
+  Load(DataType::Type::kBool, temp.W(), MemOperand(objectReg.X(), mirror::Object::FlagsOffset())); // temp now holds flags byte
+  // jiacheng end
+  __ Lsr(temp, temp, 7); // temp now holds stub flag
+  // Skip stub check if stub flag is not set
+  __ Cbz(temp, &stubCheckDoneLabel);
+
+  // Load reclamation table entry address from stub
+  // jiacheng start
+  // Load(DataType::Type::kInt64, temp, MemOperand(objectReg.X(), 0)); // temp now holds table_entry_
+  Load(DataType::Type::kInt64, temp, MemOperand(objectReg.X(), niel::swap::Stub::TableEntryOffset())); // temp now holds table_entry_
+  // jiacheng end
+  // Lock reclamation table entry
+  GenerateLockReclamationTableEntry(temp, temp2);
+
+  // Put a back-pointer to the stub in the reclamation table entry
+  Store(DataType::Type::kInt32, objectReg.W(), MemOperand(temp, 8));
+
+  // Load resident bit from reclamation table entry
+  Load(DataType::Type::kInt32, temp.W(), MemOperand(temp, 0)); // temp now holds table_entry_->bit_flags_
+  __ And(temp, temp, 0x1 << niel::swap::RESIDENT_BIT_OFFSET); // temp now holds a nonzero value if the resident bit is set or zero if the resident bit is cleared
+
+  // Skip SwapInOnDemand() call if resident bit is set
+  __ Cbnz(temp, &swapDoneLabel);
+
+  std::vector<CPURegister> registersToSave = IdentifyRegistersToSave(registersToMaybeSave,
+                                                                     locations);
+  GenerateSaveRegisters(registersToSave);
+
+  // Call SwapInOnDemand()
+  // Primitive::Type type = Primitive::kPrimNot;
+  DataType::Type type = DataType::Type::kReference;
+  InvokeRuntimeCallingConvention callingConvention;
+  MoveLocation(LocationFrom(callingConvention.GetRegisterAt(0)), LocationFrom(objectReg), type);
+  int32_t entryPointOffset = QUICK_ENTRY_POINT(pSwapInOnDemand);
+  __ Ldr(lr, MemOperand(tr, entryPointOffset));
+  __ Blr(lr);
+  GenerateRestoreRegisters(registersToSave);
+
+  __ Bind(&swapDoneLabel);
+
+  // Store stub address in the object header so that GenerateRestoreStub() can
+  // restore it later.
+  //
+  // Note: this code might be confusing because the register named objectReg
+  // actually contains the stub address right now, and the register named temp
+  // will hold the address of the corresponding real object.
+
+  // jiacheng start
+  // Load(DataType::Type::kInt64, temp, MemOperand(objectReg.X(), 0)); // temp now holds table_entry_
+  Load(DataType::Type::kInt64, temp, MemOperand(objectReg.X(), niel::swap::Stub::TableEntryOffset())); // temp now holds table_entry_
+  // jiacheng end
+
+  Load(DataType::Type::kInt32, temp.W(), MemOperand(temp, 4)); // temp now holds table_entry_->object_address_
+
+  // jiacheng start
+  // Store(DataType::Type::kInt32, objectReg.W(), MemOperand(temp, 12));
+  Store(DataType::Type::kInt32, objectReg.W(), MemOperand(temp, mirror::Object::PaddingOffset()));
+  // jiacheng end
+
+  // Replace stub pointer in register with pointer to swapped-in object
+  // jiacheng start
+  // __ Mov(objectReg, temp.W());
+  __ Mov(objectReg.W(), temp.W());
+  // jiacheng end
+  __ Bind(&stubCheckDoneLabel);
+}
+
+void CodeGeneratorARM64::GenerateRestoreStub(Register objectReg) {
+// 因为在调用这个函数的时候，无法分配临时寄存器了，因此这里使用lr作为临时寄存器
+// 该函数负责保证lr的状态在调用前后不变
+  vixl::aarch64::Label doneLabel;
+  
+  // jiacheng start
+  // UseScratchRegisterScope temps(GetVIXLAssembler());
+  // Register temp = temps.AcquireX();
+  // CHECK(temp.GetCode() != 0);
+
+  // 保存lr寄存器状态
+  Register temp = lr;
+  std::vector<CPURegister> registersToSave;
+  registersToSave.emplace_back(temp);
+  GenerateSaveRegisters(registersToSave);
+  // jiacheng end
+
+  /*
+   * We're going to do some terrible things here, due to the fact that we need
+   * two registers for the decrement that we have to perform as part of
+   * unlocking the reclamation table entry, but the compiler sometimes only has
+   * one temp register free when this method is called. Specifically, we're
+   * going to use this method's objectReg as the temp register for the unlock
+   * operation, and we're going to use this method's temp register as the table
+   * entry register for the unlock operation. We have to use objectReg as the
+   * temp register because the table entry register has to be 64 bits wide, and
+   * objectReg is only guaranteed to be a 32-bit register. Using objectReg in
+   * this way is fine because we can recover the stub address from the table
+   * entry after performing the unlock operation.
+   *
+   * This is the plan:
+   * 1. Load the object header's padding word into the temp register.
+   * 2. Check if the padding word is a stub address, and if not, skip the
+   * remaining steps.
+   * 3. Move the stub address into the objectReg register.
+   * 4. Load the reclamation table entry address into the temp register.
+   * 5. Pass the temp register into GenerateUnlockReclamationTableEntry() as
+   * its tableEntryRegister argument, and pass in the objectReg register in as
+   * its temp argument (we have to use objectReg as the temp register there
+   * because our temp register in this method is the only one wide enough to
+   * hold the table entry address).
+   * 6. Use the back-pointer in the reclamation table entry to load the stub
+   * address into the objectReg register.
+   */
+
+  // Load the object's padding word and check if it is a stub address
+  // jiacheng start
+  // Load(DataType::Type::kInt32, temp.W(), MemOperand(objectReg.X(), 12)); // temp now holds the stub address
+  Load(DataType::Type::kInt32, temp.W(), MemOperand(objectReg.X(), mirror::Object::PaddingOffset())); // temp now holds the stub address
+  // jiacheng end
+  __ Cbz(temp, &doneLabel);
+
+  /*
+   * Previously, we zeroed out the object's padding word here, but I think that
+   * step both introduced a race condition and was unnecessary.
+   *
+   * The race condition: if two threads are accessing the same object at the
+   * same time, one thread might zero out the padding word while the second
+   * thread is in the process of reading the stub address from the padding word
+   * (but after that second thread did its initial check of whether the padding
+   * word is zero). As a result, the second thread would replace the object
+   * address with a null pointer.
+   *
+   * Why it was unnecessary: the only reason to zero out the object's padding
+   * word is to prevent compiled code from incorrectly replacing the object
+   * address with its stub's address in the future. But once we've created a
+   * stub for an object, we will always want to replace the object address with
+   * the stub address. It's true that the object might have an old stub address
+   * sitting in its padding word after a semi-space GC runs, but when the
+   * compiled code starts accessing that object through its stub, it will
+   * overwrite the padding word with the stub's new address, so there should
+   * never be a situation where the old stub address is accessed.
+   */
+
+  // Move stub address into objectReg
+  // jiacheng start
+  // __ Mov(objectReg, temp.W()); // objectReg now holds the stub address
+  __ Mov(objectReg.W(), temp.W()); // objectReg now holds the stub address
+  // jiacheng end
+
+  // Load reclamation table entry address from stub
+  // jiacheng start
+  // Load(DataType::Type::kInt64, temp.X(), MemOperand(objectReg.X(), 0)); // temp now holds table_entry_
+  Load(DataType::Type::kInt64, temp.X(), MemOperand(objectReg.X(), niel::swap::Stub::TableEntryOffset())); // temp now holds table_entry_
+  // jiacheng end
+
+  // Unlock reclamation table entry
+  GenerateUnlockReclamationTableEntry(temp, objectReg.W()); // objectReg now holds garbage
+
+  // Load stub address into objectReg using the reclamation table entry's
+  // back-pointer
+  Load(DataType::Type::kInt32, objectReg.W(), MemOperand(temp, 8)); // objectReg now holds stub address
+
+  __ Bind(&doneLabel);
+
+  // jiacheng start
+  // 恢复lr寄存器状态
+  GenerateRestoreRegisters(registersToSave);
+  // jiacheng end
+}
+
+void CodeGeneratorARM64::GenerateUpdateStub(Register stubReg,
+    const std::vector<CPURegister> & registersToMaybeSave, LocationSummary * locations) {
+  UseScratchRegisterScope temps(GetVIXLAssembler());
+  vixl::aarch64::Label doneLabel;
+
+  Register temp = temps.AcquireX();
+  CHECK(temp.GetCode() != 0);
+  Register temp2 = temps.AcquireW();
+  CHECK(temp2.GetCode() != 0);
+
+  // Read stub flag of object
+  // jiacheng start
+  // Load(DataType::Type::kBool, temp.W(), MemOperand(stubReg.X(), 8)); // temp now holds flags byte
+  Load(DataType::Type::kBool, temp.W(), MemOperand(stubReg.X(), mirror::Object::FlagsOffset())); // temp now holds flags byte
+  // jiacheng end
+
+  __ Lsr(temp, temp, 7); // temp now holds stub flag
+
+  // Skip stub update if stub flag is not set
+  __ Cbz(temp, &doneLabel);
+
+  // Load reclamation table entry address from stub
+  // jiacheng start
+  // Load(DataType::Type::kInt64, temp, MemOperand(stubReg.X(), 0)); // temp now holds table_entry_
+  Load(DataType::Type::kInt64, temp, MemOperand(stubReg.X(), niel::swap::Stub::TableEntryOffset())); // temp now holds table_entry_
+  // jiacheng end
+
+  // Lock reclamation table entry
+  GenerateLockReclamationTableEntry(temp, temp2);
+
+  // Load object address from stub
+  Load(DataType::Type::kInt32, temp.W(), MemOperand(temp, 4)); // temp now holds table_entry_->object_address_
+
+  std::vector<CPURegister> registersToSave = IdentifyRegistersToSave(registersToMaybeSave,
+                                                                     locations);
+  // Call PopulateStub()
+  GenerateSaveRegisters(registersToSave);
+  // Primitive::Type type = Primitive::kPrimNot;
+  DataType::Type type = DataType::Type::kReference;
+  InvokeRuntimeCallingConvention callingConvention;
+  MoveLocation(LocationFrom(callingConvention.GetRegisterAt(0)), LocationFrom(stubReg), type);
+  MoveLocation(LocationFrom(callingConvention.GetRegisterAt(1)), LocationFrom(temp), type);
+  int32_t entryPointOffset = QUICK_ENTRY_POINT(pPopulateStub);
+  __ Ldr(lr, MemOperand(tr, entryPointOffset));
+  __ Blr(lr);
+  GenerateRestoreRegisters(registersToSave);
+
+  // Load reclamation table entry address from stub (again)
+  // jiacheng start
+  // Load(DataType::Type::kInt64, temp, MemOperand(stubReg.X(), 0)); // temp now holds table_entry_
+  Load(DataType::Type::kInt64, temp, MemOperand(stubReg.X(), niel::swap::Stub::TableEntryOffset())); // temp now holds table_entry_
+  // jiacheng end
+
+  // Unlock reclamation table entry
+  GenerateUnlockReclamationTableEntry(temp, temp2);
+  __ Bind(&doneLabel);
+}
+
+std::vector<CPURegister> CodeGeneratorARM64::IdentifyRegistersToSave(
+    const std::vector<vixl::aarch64::CPURegister> & registersToMaybeSave, LocationSummary * locations) {
+  std::set<int> coreRegCodes; // VIXL register codes
+  std::set<int> fpRegCodes;   // VIXL register codes
+
+  // Save registers in registersToMaybeSave only if they are not callee-saved
+  // registers.
+  //
+  // TODO: if we stick with just saving all parameter registers, figure out if
+  // passing in the registersToMaybeSave list is still necessary.
+  //
+  // TODO: make sure I'm handling conversion between VIXL and ART register
+  // codes correctly.
+  for (size_t i = 0; i < registersToMaybeSave.size(); i++) {
+    CPURegister reg = registersToMaybeSave[i];
+    CHECK(reg.IsRegister() || reg.IsFPRegister());
+    int artCode = helpers::ARTRegCodeFromVIXL(reg.GetCode());
+    if (reg.IsRegister() && !IsCoreCalleeSaveRegister(artCode)) {
+      coreRegCodes.insert(reg.GetCode());
+    }
+    else if (reg.IsFPRegister() && !IsFloatingPointCalleeSaveRegister(artCode)) {
+      fpRegCodes.insert(reg.GetCode());
+    }
+  }
+
+  // Mark registers reported as live by the LocationSummary to be saved.
+  RegisterSet * liveRegisterSet = locations->GetLiveRegisters();
+  for (size_t i = 0; i < GetNumberOfCoreRegisters(); i++) {
+    if (!IsCoreCalleeSaveRegister(i) && liveRegisterSet->ContainsCoreRegister(i)) {
+      coreRegCodes.insert(i);
+    }
+  }
+  for (size_t i = 0; i < GetNumberOfFloatingPointRegisters(); i++) {
+    if (   !IsFloatingPointCalleeSaveRegister(i)
+        && liveRegisterSet->ContainsFloatingPointRegister(i)) {
+      fpRegCodes.insert(i);
+    }
+  }
+
+  // Mark all parameter registers to be saved, because sometimes there are live
+  // parameter registers that are not included in the LocationSummary's live
+  // register set.
+  //
+  // TODO: Figure out if there's a way to identify those missing live parameter
+  // registers.
+  for (int i = 0; i < 8; i++) {
+    coreRegCodes.insert(i);
+  }
+  for (int i = 0; i < 8; i++) {
+    fpRegCodes.insert(i);
+  }
+
+  // Populate the registersToSave list using the sets of register codes marked
+  // to be saved.
+  std::vector<CPURegister> registersToSave;
+
+  for (auto it = coreRegCodes.begin(); it != coreRegCodes.end(); it++) {
+    registersToSave.push_back(vixl::aarch64::XRegister(*it));
+  }
+  for (auto it = fpRegCodes.begin(); it != fpRegCodes.end(); it++) {
+    registersToSave.push_back(vixl::aarch64::DRegister(*it));
+  }
+  return registersToSave;
+}
+
+const int REGISTER_WIDTH = 8;
+
+int CodeGeneratorARM64::ComputeStackGrowthSize(
+    const std::vector<CPURegister> & registersToSave) {
+
+  // Calculate number of bytes to grow the stack
+  int stackGrowthSize = 0;
+  if (registersToSave.size() > 0) {
+    stackGrowthSize = registersToSave.size() * REGISTER_WIDTH;
+    // clamp to nearest multiple of 16
+    if (stackGrowthSize % 16 > 0) {
+      stackGrowthSize = stackGrowthSize + (16 - stackGrowthSize % 16);
+    }
+  }
+  return stackGrowthSize;
+}
+
+void CodeGeneratorARM64::GetTypedRegisterLists(const std::vector<CPURegister> & registersToSave,
+    std::vector<Register> & coreRegisters, std::vector<VRegister> & vRegisters) {
+  CHECK(coreRegisters.size() == 0);
+  CHECK(vRegisters.size() == 0);
+  for (size_t i = 0; i < registersToSave.size(); i++) {
+    CPURegister reg = registersToSave[i];
+    if (reg.IsRegister()) {
+      coreRegisters.push_back(Register(reg));
+    }
+    else if (reg.IsVRegister()) {
+      vRegisters.push_back(VRegister(reg));
+    }
+  }
+  CHECK(coreRegisters.size() + vRegisters.size() == registersToSave.size());
+}
+
+void CodeGeneratorARM64::GenerateSaveRegisters(
+    const std::vector<CPURegister> & registersToSave) {
+
+  int stackGrowthSize = ComputeStackGrowthSize(registersToSave);
+
+  std::vector<Register> coreRegisters;
+  std::vector<VRegister> vRegisters;
+  GetTypedRegisterLists(registersToSave, coreRegisters, vRegisters);
+
+  if (registersToSave.size() > 0) {
+    __ Sub(sp, sp, stackGrowthSize);
+    size_t i = 0; // index in current register list
+    size_t memoryOffset = 0; // current offset from SP, in bytes
+    while (i < coreRegisters.size()) {
+      if (i < coreRegisters.size() - 1) {
+        __ Stp(coreRegisters[i], coreRegisters[i + 1], MemOperand(sp, memoryOffset));
+        i += 2;
+        memoryOffset += 2 * REGISTER_WIDTH;
+      }
+      else {
+        __ Str(coreRegisters[i], MemOperand(sp, memoryOffset));
+        i++;
+        memoryOffset += REGISTER_WIDTH;
+      }
+    }
+    i = 0;
+    while (i < vRegisters.size()) {
+      if (i < vRegisters.size() - 1) {
+        __ Stp(vRegisters[i], vRegisters[i + 1], MemOperand(sp, memoryOffset));
+        i += 2;
+        memoryOffset += 2 * REGISTER_WIDTH;
+      }
+      else {
+        __ Str(vRegisters[i], MemOperand(sp, memoryOffset));
+        i++;
+        memoryOffset += REGISTER_WIDTH;
+      }
+    }
+  }
+}
+
+void CodeGeneratorARM64::GenerateRestoreRegisters(
+    const std::vector<CPURegister> & savedRegisters) {
+  int stackGrowthSize = ComputeStackGrowthSize(savedRegisters);
+  std::vector<Register> coreRegisters;
+  std::vector<VRegister> vRegisters;
+  GetTypedRegisterLists(savedRegisters, coreRegisters, vRegisters);
+  if (savedRegisters.size() > 0) {
+    size_t i = 0; // index in current register list
+    size_t memoryOffset = 0; // current offset from SP, in bytes
+    while (i < coreRegisters.size()) {
+      if (i < coreRegisters.size() - 1) {
+        __ Ldp(coreRegisters[i], coreRegisters[i + 1], MemOperand(sp, memoryOffset));
+        i += 2;
+        memoryOffset += 2 * REGISTER_WIDTH;
+      }
+      else {
+        __ Ldr(coreRegisters[i], MemOperand(sp, memoryOffset));
+        i++;
+        memoryOffset += REGISTER_WIDTH;
+      }
+    }
+    i = 0;
+    while (i < vRegisters.size()) {
+      if (i < vRegisters.size() - 1) {
+        __ Ldp(vRegisters[i], vRegisters[i + 1], MemOperand(sp, memoryOffset));
+        i += 2;
+        memoryOffset += 2 * REGISTER_WIDTH;
+      }
+      else {
+        __ Ldr(vRegisters[i], MemOperand(sp, memoryOffset));
+        i++;
+        memoryOffset += REGISTER_WIDTH;
+      }
+    }
+    __ Add(sp, sp, stackGrowthSize);
+  }
+}
+
+void CodeGeneratorARM64::GenerateSetReadBit(Register objectReg) {
+  UseScratchRegisterScope temps(GetVIXLAssembler());
+  vixl::aarch64::Label doneLabel;
+
+  Register temp = temps.AcquireW();
+  CHECK(temp.GetCode() != 0);
+
+  // jiacheng start
+  // int accessBitsByteOffset = 11;
+  int accessBitsByteOffset = mirror::Object::AccessBitsOffset();
+  // jiacheng end
+  int readBitOffset = 1; // within x_access_bits_ byte
+
+  /*
+   * Previously, we checked the value of the IgnoreReadFlag in the object
+   * header's x_flags_ byte here and skipped setting the read bit if it was
+   * set, but I don't think there is any reason to do that check here. The
+   * IgnoreReadFlag is only used to make sure the read bit is not set by reads
+   * performed by the GC, and the GC code is all native runtime code, not
+   * compiled OAT code.
+   */
+
+  // __ Ldrb(temp, MemOperand(objectReg.X(), accessBitsByteOffset)); // temp now holds x_access_bits_ byte
+  Load(DataType::Type::kBool, temp, MemOperand(objectReg.X(), accessBitsByteOffset)); // temp now holds x_access_bits_ byte
+
+  __ Orr(temp, temp, (0x1 << readBitOffset));
+
+  // __ Strb(temp, MemOperand(objectReg.X(), accessBitsByteOffset));
+  Store(DataType::Type::kBool, temp, MemOperand(objectReg.X(), accessBitsByteOffset));
+  __ Bind(&doneLabel);
+}
+
+void CodeGeneratorARM64::GenerateSetWriteBitAndDirtyBit(Register objectReg) {
+  UseScratchRegisterScope temps(GetVIXLAssembler());
+  Register dirtyBitByteReg = temps.AcquireW();
+  Register temp = temps.AcquireW();
+  CHECK(dirtyBitByteReg.GetCode() != 0);
+  CHECK(temp.GetCode() != 0);
+
+  // jiacheng start
+  // int accessBitsByteOffset = 11;
+  int accessBitsByteOffset = mirror::Object::AccessBitsOffset();
+  // jiacheng end
+  int writeBitOffset = 2; // within x_access_bits_ byte
+
+  // jiacheng start
+  // int dirtyBitByteOffset = 10;
+  int dirtyBitByteOffset = mirror::Object::DirtyBitOffset();
+  // jiacheng end
+
+  Load(DataType::Type::kBool, temp, MemOperand(objectReg.X(), accessBitsByteOffset));
+  __ Orr(temp, temp, (0x1 << writeBitOffset));
+  Store(DataType::Type::kBool, temp, MemOperand(objectReg.X(), accessBitsByteOffset));
+
+  // We need to use a separate register because STLRB does not support the
+  // "base plus offset" addressing mode
+  __ Add(dirtyBitByteReg, objectReg, dirtyBitByteOffset);
+  __ Mov(temp, 0x1);
+
+  __ Stlrb(temp, MemOperand(dirtyBitByteReg.X()));
+}
+
+// marvin end
+
 void CodeGeneratorARM64::GenerateVirtualCall(
     HInvokeVirtual* invoke, Location temp_in, SlowPathCode* slow_path) {
   // Use the calling convention instead of the location of the receiver, as

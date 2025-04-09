@@ -38,6 +38,9 @@ inline uint32_t Array::ClassSize(PointerSize pointer_size) {
 
 template<VerifyObjectFlags kVerifyFlags>
 inline size_t Array::SizeOf() {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE(SizeOf, Array, size_t, GATHER_TEMPLATE_ARGS(kVerifyFlags), )
+  // marvin end
   // No read barrier is needed for reading a constant primitive field through
   // constant reference field chain. See ReadBarrierOption.
   size_t component_size_shift =
@@ -92,6 +95,9 @@ inline void PrimitiveArray<T>::Set(int32_t i, T value) {
 template<typename T>
 template<bool kTransactionActive, bool kCheckTransaction, VerifyObjectFlags kVerifyFlags>
 inline void PrimitiveArray<T>::SetWithoutChecks(int32_t i, T value) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE_VOID(SetWithoutChecks, PrimitiveArray<T>, GATHER_TEMPLATE_ARGS(kTransactionActive, kCheckTransaction, kVerifyFlags), i, value)
+  // marvin end
   if (kCheckTransaction) {
     DCHECK_EQ(kTransactionActive, Runtime::Current()->IsActiveTransaction());
   }
@@ -100,6 +106,10 @@ inline void PrimitiveArray<T>::SetWithoutChecks(int32_t i, T value) {
   }
   DCHECK(CheckIsValidIndex<kVerifyFlags>(i));
   GetData()[i] = value;
+  // marvin start
+  SetWriteBit();
+  SetDirtyBit();
+  // marvin end
 }
 // Backward copy where elements are of aligned appropriately for T. Count is in T sized units.
 // Copies are guaranteed not to tear when the sizeof T is less-than 64bit.
@@ -130,6 +140,9 @@ inline void PrimitiveArray<T>::Memmove(int32_t dst_pos,
                                        ObjPtr<PrimitiveArray<T>> src,
                                        int32_t src_pos,
                                        int32_t count) {
+  // marvin start
+  SWAP_PREAMBLE_VOID(Memmove, PrimitiveArray<T>, dst_pos, src, src_pos, count);
+  // marvin end
   if (UNLIKELY(count == 0)) {
     return;
   }
@@ -185,6 +198,10 @@ inline void PrimitiveArray<T>::Memmove(int32_t dst_pos,
       }
     }
   }
+  // marvin start
+  SetWriteBit();
+  SetDirtyBit();
+  // marvin end
 }
 
 template<class T>
@@ -192,6 +209,9 @@ inline void PrimitiveArray<T>::Memcpy(int32_t dst_pos,
                                       ObjPtr<PrimitiveArray<T>> src,
                                       int32_t src_pos,
                                       int32_t count) {
+  // marvin start
+  SWAP_PREAMBLE_VOID(Memcpy, PrimitiveArray<T>, dst_pos, src, src_pos, count);
+  // marvin end
   if (UNLIKELY(count == 0)) {
     return;
   }
@@ -224,10 +244,17 @@ inline void PrimitiveArray<T>::Memcpy(int32_t dst_pos,
     const uint64_t* s = reinterpret_cast<const uint64_t*>(src_raw);
     ArrayForwardCopy<uint64_t>(d, s, count);
   }
+  // marvin start
+  SetWriteBit();
+  SetDirtyBit();
+  // marvin end
 }
 
 template<typename T, PointerSize kPointerSize, VerifyObjectFlags kVerifyFlags>
 inline T PointerArray::GetElementPtrSize(uint32_t idx) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE(GetElementPtrSize, PointerArray, T, GATHER_TEMPLATE_ARGS(T, kPointerSize, kVerifyFlags), idx)
+  // marvin end
   if (kPointerSize == PointerSize::k64) {
     DCHECK(IsLongArray<kVerifyFlags>());
   } else {
@@ -262,6 +289,9 @@ inline T PointerArray::GetElementPtrSize(uint32_t idx, PointerSize ptr_size) {
 
 template<bool kTransactionActive, bool kCheckTransaction, bool kUnchecked>
 inline void PointerArray::SetElementPtrSize(uint32_t idx, uint64_t element, PointerSize ptr_size) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE_VOID(SetElementPtrSize, PointerArray, GATHER_TEMPLATE_ARGS(kTransactionActive, kUnchecked), idx, element, ptr_size)
+  // marvin end
   if (ptr_size == PointerSize::k64) {
     (kUnchecked ? ObjPtr<LongArray>::DownCast(ObjPtr<Object>(this)) : AsLongArray())->
         SetWithoutChecks<kTransactionActive, kCheckTransaction>(idx, element);
@@ -282,6 +312,9 @@ template <VerifyObjectFlags kVerifyFlags, typename Visitor>
 inline void PointerArray::Fixup(ObjPtr<mirror::PointerArray> dest,
                                 PointerSize pointer_size,
                                 const Visitor& visitor) {
+  // marvin start
+  SWAP_PREAMBLE_TEMPLATE_VOID(Fixup, PointerArray, GATHER_TEMPLATE_ARGS(kVerifyFlags, Visitor), dest, pointer_size, visitor)
+  // marvin end
   for (size_t i = 0, count = GetLength(); i < count; ++i) {
     void* ptr = GetElementPtrSize<void*, kVerifyFlags>(i, pointer_size);
     void* new_ptr = visitor(ptr);

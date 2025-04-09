@@ -21,6 +21,10 @@
 
 #include "base/mutex.h"
 
+// jiacheng start
+#include <android-base/logging.h>
+// jiacheng end
+
 namespace art {
 
 namespace mirror {

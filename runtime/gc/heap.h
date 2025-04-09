@@ -133,6 +133,14 @@ class Heap {
   static constexpr size_t kPartialTlabSize = 16 * KB;
   static constexpr bool kUsePartialTlabs = true;
 
+  // marvin start
+  std::vector<space::Space*> nielinst_spaces_;
+  std::vector<collector::GarbageCollector*>* nielinst_GetGarbageCollectors() { return &garbage_collectors_; }
+  collector::GarbageCollector* nielinst_GetSemiSpace() { return (collector::GarbageCollector*)semi_space_collector_; }
+  // collector::GarbageCollector* nielinst_GetMarkCompact() { return (collector::GarbageCollector*)mark_compact_collector_; }
+  collector::GarbageCollector* nielinst_GetConcurrentCopying() { return (collector::GarbageCollector*)concurrent_copying_collector_; }
+  // marvin end
+
   static constexpr size_t kDefaultStartingSize = kPageSize;
   static constexpr size_t kDefaultInitialSize = 2 * MB;
   static constexpr size_t kDefaultMaximumSize = 256 * MB;
@@ -306,6 +314,14 @@ class Heap {
 
   void VisitReflectiveTargets(ReflectiveValueVisitor* visitor)
       REQUIRES(Locks::mutator_lock_, !Locks::heap_bitmap_lock_, !*gc_complete_lock_);
+
+  // jiacheng start
+  typedef void(*WalkCallback)(void *start, void *end, size_t num_bytes, void* callback_arg);
+ 
+  template <typename Visitor>
+  void PatchStubVisitObjects(Visitor&& visitor, WalkCallback callback)
+      REQUIRES(Locks::mutator_lock_, !Locks::heap_bitmap_lock_, !*gc_complete_lock_);
+  // jiacheng end
 
   void CheckPreconditionsForAllocObject(ObjPtr<mirror::Class> c, size_t byte_count)
       REQUIRES_SHARED(Locks::mutator_lock_);
@@ -807,6 +823,12 @@ class Heap {
   CollectorType CurrentCollectorType() {
     return collector_type_;
   }
+
+  // jiacheng start
+  CollectorType GetDesiredCollectorType() {
+    return desired_collector_type_;
+  }
+  // jiacheng end
 
   bool IsGcConcurrentAndMoving() const {
     if (IsGcConcurrent() && IsMovingGc(collector_type_)) {

@@ -31,6 +31,10 @@
 #include "thread.h"
 #include "thread_list.h"
 
+// marvin start
+#include "niel_swap.h"
+// marvin end
+
 namespace art {
 namespace gc {
 namespace space {
@@ -258,6 +262,9 @@ MallocSpace* RosAllocSpace::CreateInstance(MemMap&& mem_map,
 }
 
 size_t RosAllocSpace::Free(Thread* self, mirror::Object* ptr) {
+  // marvin start
+  niel::swap::GcRecordFree(self, ptr);
+  // marvin end
   if (kDebugSpaces) {
     CHECK(ptr != nullptr);
     CHECK(Contains(ptr)) << "Free (" << ptr << ") not in bounds of heap " << *this;
@@ -271,6 +278,11 @@ size_t RosAllocSpace::Free(Thread* self, mirror::Object* ptr) {
 
 size_t RosAllocSpace::FreeList(Thread* self, size_t num_ptrs, mirror::Object** ptrs) {
   DCHECK(ptrs != nullptr);
+  // marvin start
+  for (size_t i = 0; i < num_ptrs; i++) {
+    niel::swap::GcRecordFree(self, ptrs[i]);
+  }
+  // marvin end
 
   size_t verify_bytes = 0;
   for (size_t i = 0; i < num_ptrs; i++) {
@@ -307,6 +319,9 @@ size_t RosAllocSpace::FreeList(Thread* self, size_t num_ptrs, mirror::Object** p
   if (kVerifyFreedBytes) {
     CHECK_EQ(verify_bytes, bytes_freed);
   }
+  // marvin start
+  NIEL_INST_RECORD_FREE(self, this, bytes_freed, num_ptrs);
+  // marvin end
   return bytes_freed;
 }
 

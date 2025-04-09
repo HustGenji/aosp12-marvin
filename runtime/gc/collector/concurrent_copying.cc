@@ -47,6 +47,11 @@
 #include "thread_list.h"
 #include "well_known_classes.h"
 
+// jiacheng start
+#include "niel_instrumentation.h"
+#include "niel_stub.h"
+// jiacheng end
+
 namespace art {
 namespace gc {
 namespace collector {
@@ -205,11 +210,18 @@ ConcurrentCopying::~ConcurrentCopying() {
 }
 
 void ConcurrentCopying::RunPhases() {
+  // jiacheng start
+  niel::swap::GCStart();
+  NIEL_INST_START_ACCESS_COUNT(this);
+  // jiacheng end
   CHECK(kUseBakerReadBarrier || kUseTableLookupReadBarrier);
   CHECK(!is_active_);
   is_active_ = true;
   Thread* self = Thread::Current();
   thread_running_gc_ = self;
+  // jiacheng start
+  niel::swap::ConcurrentCopyingRecordStubMappings(self);
+  // jiacheng end
   Locks::mutator_lock_->AssertNotHeld(self);
   {
     ReaderMutexLock mu(self, *Locks::mutator_lock_);
@@ -248,6 +260,10 @@ void ConcurrentCopying::RunPhases() {
     }
     CheckEmptyMarkStack();
   }
+  // jiacheng start
+  // Update data structures before reclaim regions
+  niel::swap::ConcurrentCopyingUpdateDataStructures(self);
+  // jiacheng end
   {
     ReaderMutexLock mu(self, *Locks::mutator_lock_);
     ReclaimPhase();
@@ -256,6 +272,11 @@ void ConcurrentCopying::RunPhases() {
   CHECK(is_active_);
   is_active_ = false;
   thread_running_gc_ = nullptr;
+  
+  // jiacheng start
+  NIEL_INST_FINISH_ACCESS_COUNT(this);
+  niel::swap::GCEnd();
+  // jiacheng end
 }
 
 class ConcurrentCopying::ActivateReadBarrierEntrypointsCheckpoint : public Closure {
@@ -895,8 +916,16 @@ inline void ConcurrentCopying::ScanImmuneObject(mirror::Object* obj) {
     // Young GC does not care about references to unevac space. It is safe to not gray these as
     // long as scan immune objects happens after scanning the dirty cards.
     Scan<true>(obj);
+    // jiacheng start
+    NIEL_INST_COUNT_ACCESS(this, obj);
+    niel::swap::CheckAndUpdate(this, obj);
+    // jiacheng end
   } else {
     Scan<false>(obj);
+    // jiacheng start
+    NIEL_INST_COUNT_ACCESS(this, obj);
+    niel::swap::CheckAndUpdate(this, obj);
+    // jiacheng end
   }
 }
 
@@ -1057,6 +1086,49 @@ void ConcurrentCopying::CaptureThreadRootsForMarking() {
   }
 }
 
+// jiacheng start
+template <bool kHandleInterRegionRefs>
+class ConcurrentCopying::StubComputeLiveBytesAndMarkRefFieldsVisitor {
+  public:
+    explicit StubComputeLiveBytesAndMarkRefFieldsVisitor(ConcurrentCopying* collector, size_t obj_region_idx)
+      : collector_(collector), 
+      obj_region_idx_(obj_region_idx),
+      contains_inter_region_idx_(false) {}
+
+    void operator()(mirror::Object* ref) const
+        ALWAYS_INLINE
+        REQUIRES_SHARED(Locks::mutator_lock_)
+        REQUIRES_SHARED(Locks::heap_bitmap_lock_) {
+      CheckReference(ref);
+    }
+
+  private:
+    void CheckReference(mirror::Object* ref) const
+        REQUIRES_SHARED(Locks::mutator_lock_) {
+      if (ref == nullptr) {
+        // Nothing to do.
+        return;
+      }
+      if (!collector_->TestAndSetMarkBitForRef(ref)) {
+        collector_->PushOntoLocalMarkStack(ref);
+      }
+      if (kHandleInterRegionRefs && !contains_inter_region_idx_) {
+        size_t ref_region_idx = collector_->RegionSpace()->RegionIdxForRef(ref);
+        // If a region-space object refers to an outside object, we will have a
+        // mismatch of region idx, but the object need not be re-visited in
+        // copying phase.
+        if (ref_region_idx != static_cast<size_t>(-1) && obj_region_idx_ != ref_region_idx) {
+          contains_inter_region_idx_ = true;
+        }
+      }
+    }
+
+  ConcurrentCopying* const collector_;
+  const size_t obj_region_idx_;
+  mutable bool contains_inter_region_idx_;
+};
+// jiacheng end
+
 // Used to scan ref fields of an object.
 template <bool kHandleInterRegionRefs>
 class ConcurrentCopying::ComputeLiveBytesAndMarkRefFieldsVisitor {
@@ -1167,6 +1239,51 @@ void ConcurrentCopying::AddLiveBytesAndScanRef(mirror::Object* ref) {
   DCHECK(ref != nullptr);
   DCHECK(!immune_spaces_.ContainsObject(ref));
   DCHECK(TestMarkBitmapForRef(ref));
+  // jiacheng start
+  // LOG(INFO) << "jiacheng debug ConcurrentCopying::AddLiveBytesAndScanRef() "
+  //           << " ref= " << ref;
+  if (ref->GetStubFlag()) {
+    // LOG(INFO) << "jiacheng debug ConcurrentCopying::AddLiveBytesAndScanRef() "
+    //           << " ref->GetStubFlag()= " << ref->GetStubFlag()
+    //           << " ref= " << ref;
+    niel::swap::Stub* stub = (niel::swap::Stub*)ref;
+
+    if (UNLIKELY(!stub->GetTableEntry()->GetResidentBit())) {
+      size_t obj_size = stub->GetSize();
+      size_t alloc_size = RoundUp(obj_size, space::RegionSpace::kAlignment);
+      region_space_->AddLiveBytes(ref, alloc_size);
+
+      size_t obj_region_idx = region_space_->RegionIdxForRefUnchecked(ref);
+
+      StubComputeLiveBytesAndMarkRefFieldsVisitor</*kHandleInterRegionRefs*/ true> stub_visitor(this, obj_region_idx);
+      ComputeLiveBytesAndMarkRefFieldsVisitor</*kHandleInterRegionRefs*/ true> visitor(this, obj_region_idx);
+      stub->VisitReferences(visitor, visitor, stub_visitor);
+      
+      if (visitor.ContainsInterRegionRefs()) {
+        if (obj_region_idx == static_cast<size_t>(-1)) {
+          // If an inter-region ref has been found in a non-region-space, then it
+          // must be non-moving-space. This is because this function cannot be
+          // called on a immune-space object, and a large-object-space object has
+          // only class object reference, which is either in some immune-space, or
+          // in non-moving-space.
+          DCHECK(heap_->non_moving_space_->HasAddress(ref));
+          non_moving_space_inter_region_bitmap_.Set(ref);
+        } else {
+          region_space_inter_region_bitmap_.Set(ref);
+        }
+      }
+    } else {
+      size_t obj_region_idx = region_space_->RegionIdxForRefUnchecked(ref);
+      ComputeLiveBytesAndMarkRefFieldsVisitor</*kHandleInterRegionRefs*/ true> visitor(this, obj_region_idx);
+      (stub->GetObjectAddress())->VisitReferences<true,kDefaultVerifyFlags,kWithoutReadBarrier>(visitor, visitor);
+    }
+    return;
+  }
+  // LOG(INFO) << "jiacheng debug ConcurrentCopying::AddLiveBytesAndScanRef() "
+  //           << " ref->GetStubFlag()= " << ref->GetStubFlag()
+  //           << " ref= " << ref;
+  // jiacheng end
+ 
   size_t obj_region_idx = static_cast<size_t>(-1);
   if (LIKELY(region_space_->HasAddress(ref))) {
     obj_region_idx = region_space_->RegionIdxForRefUnchecked(ref);
@@ -1429,6 +1546,11 @@ void ConcurrentCopying::MarkingPhase() {
 template <bool kNoUnEvac>
 void ConcurrentCopying::ScanDirtyObject(mirror::Object* obj) {
   Scan<kNoUnEvac>(obj);
+  // jiacheng start
+  NIEL_INST_COUNT_ACCESS(this, obj);
+  niel::swap::CheckAndUpdate(this, obj);
+  // jiacheng end
+
   // Set the read-barrier state of a reference-type object to gray if its
   // referent is not marked yet. This is to ensure that if GetReferent() is
   // called, it triggers the read-barrier to process the referent before use.
@@ -2296,8 +2418,16 @@ inline void ConcurrentCopying::ProcessMarkStackRef(mirror::Object* to_ref) {
     obj_size = to_ref->SizeOf<kDefaultVerifyFlags>();
     if (use_generational_cc_ && young_gen_) {
       Scan<true>(to_ref, obj_size);
+    // jiacheng start
+    NIEL_INST_COUNT_ACCESS(this, to_ref);
+    niel::swap::CheckAndUpdate(this, to_ref);
+    // jiacheng end
     } else {
       Scan<false>(to_ref, obj_size);
+      // jiacheng start
+      NIEL_INST_COUNT_ACCESS(this, to_ref);
+      niel::swap::CheckAndUpdate(this, to_ref);
+      // jiacheng end
     }
   }
   if (kUseBakerReadBarrier) {
@@ -3167,6 +3297,22 @@ inline void ConcurrentCopying::Scan(mirror::Object* to_ref, size_t obj_size) {
   DCHECK_EQ(Thread::Current(), thread_running_gc_);
   RefFieldsVisitor<kNoUnEvac> visitor(this, thread_running_gc_);
   // Disable the read barrier for a performance reason.
+  
+  // jiacheng start
+  if (to_ref->GetStubFlag()) {
+    niel::swap::Stub * stub = (niel::swap::Stub *)to_ref;
+    LOG(INFO) << "jiacheng debug concurrent_copying.cc ConcurrentCopying::Scan() 3130"
+              << " to_ref->GetStubFlag()= " << to_ref->GetStubFlag()
+              << " to_ref= " << to_ref
+              << " stub->GetNumRefs()= " << stub->GetNumRefs()
+              ;
+
+    for (int i = 0; i < stub->GetNumRefs(); i++) {
+      Process(stub, i);
+    }
+    return;
+  }
+  // jiacheng end
   to_ref->VisitReferences</*kVisitNativeRoots=*/true, kDefaultVerifyFlags, kWithoutReadBarrier>(
       visitor, visitor);
   if (kDisallowReadBarrierDuringScan && !Runtime::Current()->IsActiveTransaction()) {
@@ -3176,6 +3322,10 @@ inline void ConcurrentCopying::Scan(mirror::Object* to_ref, size_t obj_size) {
 
 template <bool kNoUnEvac>
 inline void ConcurrentCopying::Process(mirror::Object* obj, MemberOffset offset) {
+  // jiacheng start
+  CHECK(!obj->GetStubFlag()) << "jiacheng debug ConcurrentCopying::Process() concurrent_copying.cc 3152 obj->GetStubFlag()= " << obj->GetStubFlag();
+  // jiacheng end
+
   // Cannot have `kNoUnEvac` when Generational CC collection is disabled.
   DCHECK(!kNoUnEvac || use_generational_cc_);
   DCHECK_EQ(Thread::Current(), thread_running_gc_);
@@ -3206,6 +3356,22 @@ inline void ConcurrentCopying::Process(mirror::Object* obj, MemberOffset offset)
       CASMode::kWeak,
       std::memory_order_release));
 }
+
+// jiacheng start
+void ConcurrentCopying::Process(niel::swap::Stub* stub, size_t offset) {
+  mirror::Object * ref = stub->GetReference(offset);
+
+  mirror::Object* to_ref = Mark</*kGrayImmuneObject=*/false, /*kNoUnEvac*/false, /*kFromGCThread=*/true>(
+      thread_running_gc_,
+      ref,
+      /*holder=*/ reinterpret_cast<mirror::Object*>(stub),
+      static_cast<MemberOffset>(offset));
+  if (to_ref == ref) {
+    return;
+  }
+  stub->SetReference(offset, to_ref);
+}
+// jiacheng end
 
 // Process some roots.
 inline void ConcurrentCopying::VisitRoots(
@@ -3412,7 +3578,15 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
   // There must not be a read barrier to avoid nested RB that might violate the to-space invariant.
   // Note that from_ref is a from space ref so the SizeOf() call will access the from-space meta
   // objects, but it's ok and necessary.
-  size_t obj_size = from_ref->SizeOf<kDefaultVerifyFlags>();
+  // jiacheng start
+  size_t obj_size = 0;
+  if (from_ref->GetStubFlag()) {
+    niel::swap::Stub* stub = (niel::swap::Stub*)from_ref;
+    obj_size = stub->GetSize();
+  } else {
+    obj_size = from_ref->SizeOf<kDefaultVerifyFlags>();
+  }
+  // jiacheng end
   size_t region_space_alloc_size = (obj_size <= space::RegionSpace::kRegionSize)
       ? RoundUp(obj_size, space::RegionSpace::kAlignment)
       : RoundUp(obj_size, space::RegionSpace::kRegionSize);
@@ -3463,17 +3637,39 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
 
   // Copy the object excluding the lock word since that is handled in the loop.
   to_ref->SetClass(klass);
-  const size_t kObjectHeaderSize = sizeof(mirror::Object);
+  // jiacheng start
+  // const size_t kObjectHeaderSize = sizeof(mirror::Object);
+  size_t kObjectHeaderSize = sizeof(mirror::Object);
+  if (from_ref->GetStubFlag()) {
+    kObjectHeaderSize = sizeof(niel::swap::Stub);
+  }
+  // jiacheng end
   DCHECK_GE(obj_size, kObjectHeaderSize);
-  static_assert(kObjectHeaderSize == sizeof(mirror::HeapReference<mirror::Class>) +
-                    sizeof(LockWord),
-                "Object header size does not match");
+  // jiacheng start
+  // static_assert(kObjectHeaderSize == sizeof(mirror::HeapReference<mirror::Class>) +
+  //                   sizeof(LockWord),
+  //               "Object header size does not match");
+  // jiacheng end
   // Memcpy can tear for words since it may do byte copy. It is only safe to do this since the
   // object in the from space is immutable other than the lock word. b/31423258
-  memcpy(reinterpret_cast<uint8_t*>(to_ref) + kObjectHeaderSize,
-         reinterpret_cast<const uint8_t*>(from_ref) + kObjectHeaderSize,
-         obj_size - kObjectHeaderSize);
+  // jiacheng start
+  // memcpy(reinterpret_cast<uint8_t*>(to_ref) + kObjectHeaderSize,
+  //        reinterpret_cast<const uint8_t*>(from_ref) + kObjectHeaderSize,
+  //        obj_size - kObjectHeaderSize);
 
+  if (!from_ref->GetStubFlag()) {
+    memcpy(reinterpret_cast<uint8_t*>(to_ref) + kObjectHeaderSize,
+          reinterpret_cast<const uint8_t*>(from_ref) + kObjectHeaderSize,
+          obj_size - kObjectHeaderSize);
+
+    to_ref->CopyHeadFrom(from_ref);
+  } else {
+    niel::swap::Stub* stub_to_ref = reinterpret_cast<niel::swap::Stub*>(to_ref);
+    niel::swap::Stub* stub_from_ref = reinterpret_cast<niel::swap::Stub*>(from_ref);
+    stub_to_ref->CopyHeadFrom(stub_from_ref);
+  }
+
+  // jiacheng end
   // Attempt to install the forward pointer. This is in a loop as the
   // lock word atomic write can fail.
   while (true) {

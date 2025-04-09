@@ -233,6 +233,24 @@ bool TryExtractArrayAccessAddress(HInstruction* access,
                                   HInstruction* array,
                                   HInstruction* index,
                                   size_t data_offset) {
+  // marvin start
+   
+  // Added by Niel: replacing the array address with an intermediate address
+  // prevents us from performing stub checks correctly. For now, we just
+  // disable substituting in an intermediate address entirely.
+  //
+  // TODO: Add this optimization back in, if it is compatible with the OS
+  // memory-reclamation mechanism, and add any required stub checks.
+  bool optimizationDisabled = true;
+  if (optimizationDisabled) {
+    // jiacheng start
+    // return;
+    return false;
+    // jiacheng end
+  }
+
+  // marvin end
+
   if (index->IsConstant() ||
       (index->IsBoundsCheck() && index->AsBoundsCheck()->GetIndex()->IsConstant())) {
     // When the index is a constant all the addressing can be fitted in the

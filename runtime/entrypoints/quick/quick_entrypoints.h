@@ -24,6 +24,10 @@
 #include "deoptimization_kind.h"
 #include "offsets.h"
 
+// marvin start
+#include "niel_swap.h"
+// marvin end
+
 #define QUICK_ENTRYPOINT_OFFSET(ptr_size, x) \
     Thread::QuickEntryPointOffset<ptr_size>(OFFSETOF_MEMBER(QuickEntryPoints, x))
 

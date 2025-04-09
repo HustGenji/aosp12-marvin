@@ -35,7 +35,10 @@ namespace mirror {
 
 class MANAGED Array : public Object {
  public:
-  static constexpr size_t kFirstElementOffset = 12u;
+  // jiacheng start
+  // static constexpr size_t kFirstElementOffset = 12u;
+  static constexpr size_t kFirstElementOffset = 20u;
+  // jiacheng end
 
   // The size of a java.lang.Class representing an array.
   static uint32_t ClassSize(PointerSize pointer_size);
@@ -97,28 +100,57 @@ class MANAGED Array : public Object {
 
   void* GetRawData(size_t component_size, int32_t index)
       REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    SWAP_PREAMBLE(GetRawData, Array, void*, component_size, index)
+    if (!GetIgnoreReadFlag()) {
+      SetReadBit();
+    }
+    // marvin end
     intptr_t data = reinterpret_cast<intptr_t>(this) + DataOffset(component_size).Int32Value() +
         + (index * component_size);
     return reinterpret_cast<void*>(data);
   }
   template <size_t kComponentSize>
   void* GetRawData(int32_t index) REQUIRES_SHARED(Locks::mutator_lock_) {
+    // jiacheng start
+    SWAP_PREAMBLE_TEMPLATE(GetRawData, Array, void*, GATHER_TEMPLATE_ARGS(kComponentSize), index)
+    if (!GetIgnoreReadFlag()) {
+      SetReadBit();
+    }
+    // jiacheng end
     intptr_t data = reinterpret_cast<intptr_t>(this) + DataOffset<kComponentSize>().Int32Value() +
         + (index * kComponentSize);
     return reinterpret_cast<void*>(data);
   }
 
-  const void* GetRawData(size_t component_size, int32_t index) const {
+  // marvin start
+   // Commented out by Niel: in order to count reads of an array inside
+   // GetRawData(), it must not be const.
+   //
+   // TODO: Uncomment if we ever stop using read counters.
+ /*
+   // const void* GetRawData(size_t component_size, int32_t index) const {
+   const void* GetRawData(size_t component_size, int32_t index) const
+       REQUIRES_SHARED(Locks::mutator_lock_) {
+     SWAP_PREAMBLE(GetRawData, Array, void*, component_size, index)
+ 
     intptr_t data = reinterpret_cast<intptr_t>(this) + DataOffset(component_size).Int32Value() +
         + (index * component_size);
     return reinterpret_cast<void*>(data);
   }
+*/
+ // marvin end    
+ 
+ // jiacheng start
+ /*
   template <size_t kComponentSize>
   const void* GetRawData(int32_t index) const {
     intptr_t data = reinterpret_cast<intptr_t>(this) + DataOffset<kComponentSize>().Int32Value() +
         + (index * kComponentSize);
     return reinterpret_cast<void*>(data);
   }
+*/
+ // jiacheng end
 
   // Returns true if the index is valid. If not, throws an ArrayIndexOutOfBoundsException and
   // returns false.
@@ -165,11 +197,18 @@ class MANAGED PrimitiveArray : public Array {
 
   static ObjPtr<PrimitiveArray<T>> AllocateAndFill(Thread* self, const T* data, size_t length)
       REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!Roles::uninterruptible_);
-
+// marvin start
+   // Commented out by Niel: the const version of GetRawData() is commented out,
+   // so this method will not compile.
+   //
+   // TODO: Uncomment if we ever stop using read counters.
+ /*
 
   const T* GetData() const ALWAYS_INLINE  REQUIRES_SHARED(Locks::mutator_lock_) {
     return reinterpret_cast<const T*>(GetRawData<sizeof(T)>(0));
   }
+*/
+// marvin end
 
   T* GetData() ALWAYS_INLINE REQUIRES_SHARED(Locks::mutator_lock_) {
     return reinterpret_cast<T*>(GetRawData<sizeof(T)>(0));
@@ -178,6 +217,9 @@ class MANAGED PrimitiveArray : public Array {
   T Get(int32_t i) ALWAYS_INLINE REQUIRES_SHARED(Locks::mutator_lock_);
 
   T GetWithoutChecks(int32_t i) ALWAYS_INLINE REQUIRES_SHARED(Locks::mutator_lock_) {
+    // marvin start
+    SWAP_PREAMBLE(GetWithoutChecks, PrimitiveArray<T>, T, i)
+    // marvin end
     DCHECK(CheckIsValidIndex(i)) << "i=" << i << " length=" << GetLength();
     return GetData()[i];
   }

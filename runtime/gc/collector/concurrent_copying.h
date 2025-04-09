@@ -28,6 +28,13 @@
 #include <vector>
 
 namespace art {
+// jiacheng start
+namespace niel {
+namespace swap {
+    class Stub;
+}
+}
+// jiacheng end
 class Barrier;
 class Closure;
 class RootInfo;
@@ -191,6 +198,9 @@ class ConcurrentCopying : public GarbageCollector {
   void Process(mirror::Object* obj, MemberOffset offset)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_ , !skipped_blocks_lock_, !immune_gray_stack_lock_);
+  // jiacheng start
+  void Process(niel::swap::Stub* stub, size_t offset)  NO_THREAD_SAFETY_ANALYSIS;
+  // jiacheng end
   void VisitRoots(mirror::Object*** roots, size_t count, const RootInfo& info) override
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_, !skipped_blocks_lock_, !immune_gray_stack_lock_);
@@ -511,6 +521,9 @@ class ConcurrentCopying : public GarbageCollector {
   class ImmuneSpaceCaptureRefsVisitor;
   template <bool kAtomicTestAndSet = false> class CaptureRootsForMarkingVisitor;
   class CaptureThreadRootsForMarkingAndCheckpoint;
+  // jiacheng start
+  template <bool kHandleInterRegionRefs> class StubComputeLiveBytesAndMarkRefFieldsVisitor;
+  // jiacheng end
   template <bool kHandleInterRegionRefs> class ComputeLiveBytesAndMarkRefFieldsVisitor;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ConcurrentCopying);
